@@ -55,10 +55,12 @@ Section "install"
   ; 打包沙箱不允许 d3dcompiler_47.dll 以原名落盘：以别名暂存，安装时用 /oname 恢复原名
   File "/oname=d3dcompiler_47.dll" "${ROOT}\dist\extra\d3dcompiler_47_new.dll"
   File /r /x ".pnpm" /x "*.d.ts.map" /x "*.d.ts" /x "*.map" /x "*.tsbuildinfo" "${SRCDIR}\*"
-  ; .pnpm 深层目录单独打包（路径超长规避：安装位置仍还原到 resources\harness\node_modules\.pnpm）
+  ; .pnpm 深层目录单独打包（路径超长规避：安装位置仍还原到 resources\harness\node_modules\.pnpm）；npm 平铺结构（无 .pnpm）时编译需加 /DNO_PNPM=1
+  !ifndef NO_PNPM
   SetOutPath "$INSTDIR\resources\harness\node_modules"
   File /r /x "*.d.ts.map" /x "*.d.ts" /x "*.map" /x "*.tsbuildinfo" "${PNMDIR}\*"
   SetOutPath "$INSTDIR"
+  !endif
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
   ; 添加 Windows Defender 排除项（安装器已是管理员权限；失败静默，绝不阻塞安装）
@@ -69,7 +71,7 @@ Section "install"
   StrCpy $1 "$INSTDIR;$0"
   SetOutPath "$PLUGINSDIR"
   File "/oname=add-defender-exclusion.ps1" "${ROOT}\build\add-defender-exclusion.ps1"
-  ExecWait '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\add-defender-exclusion.ps1" -Paths "$1"' $2
+  ExecWait '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\add-defender-exclusion.ps1" -Paths "$1"' $2
   SetOutPath "$INSTDIR"
 
   CreateDirectory "$SMPROGRAMS\${PRODUCT}"
@@ -93,7 +95,7 @@ Section "uninstall"
   StrCpy $1 "$INSTDIR;$0"
   SetOutPath "$PLUGINSDIR"
   File "/oname=add-defender-exclusion.ps1" "${ROOT}\build\add-defender-exclusion.ps1"
-  ExecWait '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\add-defender-exclusion.ps1" -Paths "$1" -Remove' $2
+  ExecWait '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\add-defender-exclusion.ps1" -Paths "$1" -Remove' $2
   SetOutPath "$INSTDIR"
 
   Delete "$SMPROGRAMS\${PRODUCT}\${PRODUCT}.lnk"

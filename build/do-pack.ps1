@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $root = 'D:\npm-global\node_modules\@deepseek-ai\dsh-desktop'
 $dist = Join-Path $root 'dist'
 $appDir = Join-Path $dist 'DeepSeekHarness'
@@ -21,8 +21,8 @@ Rename-Item (Join-Path $appDir 'electron.exe') 'DeepSeek Harness.exe'
 Write-Output "== [3/8] build app.asar from source =="
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 New-Item -ItemType Directory -Path $staging -Force | Out-Null
-# 模板 asar 丢失后改为从源码直接构建：asar 内需要入口骨架，
-# harness/node_modules 等完整依赖由 [4/8] 整体复制到 resources\harness。
+# 妯℃澘 asar 涓㈠け鍚庢敼涓轰粠婧愮爜鐩存帴鏋勫缓锛歛sar 鍐呴渶瑕佸叆鍙ｉ鏋讹紝
+# harness/node_modules 绛夊畬鏁翠緷璧栫敱 [4/8] 鏁翠綋澶嶅埗鍒?resources\harness銆?
 Copy-Item (Join-Path $root 'app') (Join-Path $staging 'app') -Recurse -Force
 New-Item -ItemType Directory -Path (Join-Path $staging 'build') -Force | Out-Null
 Copy-Item (Join-Path $root 'build\icon.ico') (Join-Path $staging 'build\icon.ico') -Force
@@ -69,14 +69,14 @@ if ($LASTEXITCODE -ne 0) { throw "rcedit failed: $LASTEXITCODE" }
 Write-Output "== [7/8] makensis =="
 Push-Location $root
 try {
-  & (Join-Path $root 'build\tools\nsis\Bin\makensis.exe') /DROOT=$root /V2 (Join-Path $root 'build\installer.nsi')
+  & (Join-Path $root 'build\tools\nsis\Bin\makensis.exe') /DROOT=$root /DNO_PNPM=1 /V2 (Join-Path $root 'build\installer.nsi')
   if ($LASTEXITCODE -ne 0) { throw "makensis failed: $LASTEXITCODE" }
 } finally {
   Pop-Location
 }
 
 Write-Output "== [8/8] verify output =="
-$setup = Join-Path $dist 'DeepSeek Harness Setup 0.1.0.exe'
+$setup = Join-Path $dist 'DeepSeek Harness Setup 0.1.2.exe'
 if (-not (Test-Path $setup)) { throw 'setup exe not found' }
 $fi = Get-Item $setup
 Write-Output ("SETUP_PATH=" + $fi.FullName)
@@ -90,9 +90,9 @@ $srcFiles = @(
   'plugins\dsh-desktop-settings\lib\index.js',
   'plugins\dsh-desktop-settings\lib\checkpoints.cjs'
 )
-# 白屏防护：asar 必须包含 /app（启动页/设置页等），缺失会导致启动白屏
+# 鐧藉睆闃叉姢锛歛sar 蹇呴』鍖呭惈 /app锛堝惎鍔ㄩ〉/璁剧疆椤电瓑锛夛紝缂哄け浼氬鑷村惎鍔ㄧ櫧灞?
 & $node -e "const fs=require('fs');const b=fs.readFileSync(process.argv[1]);const h=b.readUInt32LE(12);const j=JSON.parse(b.slice(16,16+h).toString('latin1'));const has=!!j.files.app;console.log('APP_DIR_PRESENT='+has);if(!has)process.exit(3);" $appAsar
-if ($LASTEXITCODE -ne 0) { throw "asar 缺少 /app 目录，打包中止（会白屏）" }
+if ($LASTEXITCODE -ne 0) { throw "asar 缂哄皯 /app 鐩綍锛屾墦鍖呬腑姝紙浼氱櫧灞忥級" }
 $verifyAsar = Join-Path $env:TEMP ('dsh-asar-verify-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $verifyAsar -Force | Out-Null
 Push-Location $verifyAsar
@@ -111,3 +111,5 @@ try {
 }
 
 Write-Output "PACK_DONE"
+
+
