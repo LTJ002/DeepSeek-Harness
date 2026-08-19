@@ -1,0 +1,5 @@
+# dsh-desktop-settings bundle layer: mounts the desktop settings section
+# into the built-in Web Settings page.
+- insert:
+    - id: dsh-desktop-settings
+      name: 'dsh-desktop-settings'

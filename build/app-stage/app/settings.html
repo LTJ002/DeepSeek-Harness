@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>设置</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #ffffff; color: #0f1115; font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; }
+  header { padding: 18px 24px 0; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #ececf0; }
+  h1 { font-size: 18px; font-weight: 600; }
+  nav { display: flex; gap: 4px; padding: 10px 24px; border-bottom: 1px solid #ececf0; }
+  nav button { border: none; background: transparent; color: #4b5563; padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+  nav button.active { background: #f1f3f6; color: #0f1115; font-weight: 600; }
+  main { padding: 20px 24px 32px; }
+  section { display: none; }
+  section.active { display: block; }
+  .sub { color: #81858c; font-size: 12px; margin: 4px 0 12px; }
+  .actions { display: flex; gap: 8px; margin-bottom: 12px; }
+  button.ctl { border: 1px solid #0f1115; background: #fff; color: #0f1115; padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+  button.ctl:hover { background: #0f1115; color: #fff; }
+  button.small { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #ececf0; vertical-align: top; }
+  th { color: #81858c; font-weight: 500; font-size: 12px; }
+  .mono { font-family: Consolas, "Courier New", monospace; font-size: 12px; }
+  .badge { border-radius: 6px; padding: 2px 8px; background: #eef1f4; }
+  .badge.bad { color: #dc2626; background: #fdecec; }
+  .badge.warn { color: #b45309; background: #fdf3e7; }
+  h2 { font-size: 13px; font-weight: 600; color: #81858c; margin: 18px 0 8px; }
+  .market-item { border: 1px solid #ececf0; border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
+  .market-item .row1 { display: flex; align-items: center; gap: 10px; }
+  .market-item .repo { font-family: Consolas, "Courier New", monospace; font-size: 13px; font-weight: 600; }
+  .market-item .desc { color: #4b5563; font-size: 12px; margin-top: 4px; line-height: 1.6; }
+  .market-item .status { color: #81858c; font-size: 12px; margin-top: 6px; }
+  a { color: #0f1115; }
+  ul { list-style: none; font-size: 13px; }
+  li { padding: 7px 0; border-bottom: 1px solid #ececf0; display: flex; justify-content: space-between; gap: 10px; }
+  li span:first-child { font-family: Consolas, "Courier New", monospace; }
+  .tag { color: #81858c; font-size: 12px; }
+  pre { margin-top: 10px; background: #f6f7f9; border: 1px solid #ececf0; border-radius: 10px; padding: 12px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }
+  .empty { color: #81858c; text-align: center; padding: 36px 0; }
+</style>
+</head>
+<body>
+  <header><h1>设置</h1></header>
+  <nav>
+    <button data-tab="market" class="active">插件市场</button>
+    <button data-tab="mcp">MCP 服务器</button>
+    <button data-tab="plugins">已安装插件</button>
+    <button data-tab="update">更新</button>
+  </nav>
+  <main>
+    <section id="market" class="active">
+      <div class="sub">数据源：awesome-dsh-plugin（<span class="mono">README.zh.md</span>）· 点击“安装”自动解析 npm 包名并用内置 pnpm 安装</div>
+      <div class="actions"><button class="ctl" id="market-refresh">刷新市场</button></div>
+      <div id="market-list"></div>
+    </section>
+    <section id="mcp">
+      <div class="sub">扫描 Harness 配置与常见客户端（Claude Desktop / Cursor / VS Code / Cline / Windsurf），并检查可用性</div>
+      <div class="actions"><button class="ctl" id="mcp-refresh">重新检测</button></div>
+      <div id="mcp-list"></div>
+    </section>
+    <section id="plugins">
+      <div class="sub">在 web profile（~/.dsh/profiles/web）中管理插件，使用内置 pnpm，无需安装环境</div>
+      <div class="actions">
+        <input id="pkg" placeholder="npm 包名，例如 @deepseek-ai/dsh-xxx" style="flex:1;border:1px solid #d5d8df;border-radius:8px;padding:8px 12px;font-size:13px">
+        <button class="ctl" id="install">安装</button>
+        <button class="ctl" id="plugins-refresh">刷新</button>
+      </div>
+      <h2>已安装依赖</h2><ul id="deps"></ul>
+      <h2>已启用的 Bundle 层</h2><ul id="bundles"></ul>
+      <pre id="install-log" style="display:none"></pre>
+      <div class="sub">安装完成后需重启应用才会加载新的 bundle 插件</div>
+    </section>
+    <section id="update">
+      <div class="sub">比对内置 Harness 版本与 npm 最新发布版本</div>
+      <div class="actions"><button class="ctl" id="check-update">检查更新</button></div>
+      <pre id="update-result" style="display:none"></pre>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+    function activate(tab) {
+      document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+      document.querySelectorAll('section').forEach((s) => s.classList.toggle('active', s.id === tab));
+    }
+    document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => activate(b.dataset.tab)));
+    if (window.dshDesktop && window.dshDesktop.onSettingsTab) window.dshDesktop.onSettingsTab((tab) => activate(tab || 'market'));
+
+    // ---- 插件市场 ----
+    async function loadMarket() {
+      const box = $('market-list');
+      box.innerHTML = '<div class="empty">正在加载插件市场…</div>';
+      try {
+        const data = await window.dshDesktop.marketList();
+        if (!data.groups.length) { box.innerHTML = '<div class="empty">市场列表为空</div>'; return; }
+        let html = `<div class="sub">共 ${data.total} 个插件 · 更新于 ${new Date(data.fetchedAt).toLocaleString()}</div>`;
+        for (const g of data.groups) {
+          html += `<h2>${esc(g.category)}</h2>`;
+          for (const it of g.items) {
+            html += `<div class="market-item" id="mi-${it.repo.replace(/[^A-Za-z0-9_.-]/g, '_')}">
+              <div class="row1"><span class="repo">${esc(it.repo)}</span>
+              <a href="${esc(it.url)}" target="_blank">仓库 ↗</a>
+              <span style="flex:1"></span>
+              <button class="ctl small" data-repo="${esc(it.repo)}">安装</button></div>
+              <div class="desc">${esc(it.desc)}</div>
+              <div class="status"></div></div>`;
+          }
+        }
+        box.innerHTML = html;
+        box.querySelectorAll('button[data-repo]').forEach((btn) => btn.addEventListener('click', () => installRepo(btn)));
+      } catch (e) {
+        box.innerHTML = `<div class="empty">加载失败：${esc(e.message || String(e))}</div>`;
+      }
+    }
+    async function installRepo(btn) {
+      const repo = btn.dataset.repo;
+      const item = btn.closest('.market-item');
+      const status = item.querySelector('.status');
+      btn.disabled = true; status.textContent = '正在解析 npm 包名…';
+      try {
+        const pkg = await window.dshDesktop.resolvePlugin(repo);
+        status.textContent = `包名 ${pkg}，正在安装…`;
+        const r = await window.dshDesktop.installPlugin(pkg);
+        status.textContent = r.ok ? `✔ ${pkg} 安装完成（重启应用后生效）` : `✖ 安装失败`;
+        if (!r.ok) status.textContent += '：' + (r.log || '').slice(0, 300);
+      } catch (e) {
+        status.textContent = '✖ ' + esc(e.message || String(e));
+      } finally {
+        btn.disabled = false;
+      }
+    }
+    $('market-refresh').addEventListener('click', loadMarket);
+
+    // ---- MCP ----
+    async function loadMcp() {
+      const box = $('mcp-list');
+      box.innerHTML = '<div class="empty">正在检测…</div>';
+      const list = await window.dshDesktop.detectMcp();
+      if (!list.length) { box.innerHTML = '<div class="empty">未发现已配置的 MCP 服务器</div>'; return; }
+      let html = '<table><tr><th>名称</th><th>来源</th><th>类型</th><th>命令 / 地址</th><th>状态</th></tr>';
+      for (const s of list) {
+        const cls = s.status === '可用' || s.status === '可连接' ? '' : (s.status === '无法连接' || s.status === '命令未找到' ? 'bad' : 'warn');
+        const target = s.transport === 'stdio' ? `<span class="mono">${esc(s.command)} ${esc((s.args || []).join(' '))}</span>` : `<span class="mono">${esc(s.url)}</span>`;
+        html += `<tr><td>${esc(s.name)}</td><td>${esc(s.source)}</td><td>${esc(s.transport)}</td><td>${target}</td><td><span class="badge ${cls}">${esc(s.status)}</span></td></tr>`;
+      }
+      box.innerHTML = html + '</table>';
+    }
+    $('mcp-refresh').addEventListener('click', loadMcp);
+
+    // ---- 插件 ----
+    async function loadPlugins() {
+      const info = await window.dshDesktop.listPlugins();
+      $('deps').innerHTML = info.dependencies.length ? info.dependencies.map((d) => `<li><span>${esc(d)}</span><span class="tag">依赖</span></li>`).join('') : '<li><span>无</span></li>';
+      $('bundles').innerHTML = info.bundles.length ? info.bundles.map((b) => `<li><span>${esc(b)}</span><span class="tag">bundle</span></li>`).join('') : '<li><span>无</span></li>';
+    }
+    $('install').addEventListener('click', async () => {
+      const pkg = $('pkg').value.trim(); if (!pkg) return;
+      const btn = $('install'); btn.disabled = true; btn.textContent = '安装中…';
+      const log = $('install-log'); log.style.display = 'block'; log.textContent = `$ pnpm add ${pkg}\n`;
+      const r = await window.dshDesktop.installPlugin(pkg);
+      log.textContent += (r.log || '(无输出)') + (r.ok ? '\n\n✔ 安装完成' : '\n\n✖ 安装失败');
+      btn.disabled = false; btn.textContent = '安装'; loadPlugins();
+    });
+    $('plugins-refresh').addEventListener('click', loadPlugins);
+
+    // ---- 更新 ----
+    $('check-update').addEventListener('click', async () => {
+      const pre = $('update-result'); pre.style.display = 'block'; pre.textContent = '正在查询…';
+      const info = await window.dshDesktop.checkUpdate();
+      const newer = info.latest && info.latest !== '未知' && info.latest !== info.current;
+      pre.textContent = `内置 Harness 版本：${info.current}\n最新发布版本：${info.latest ?? '查询失败'}\n\n` +
+        (newer ? `发现新版本 ${info.latest}。重新打包安装包并覆盖安装即可更新（配置与会话保留在 ~/.dsh）。` : '当前已是最新。');
+    });
+
+    // ---- 初始 ----
+    const initial = new URLSearchParams(location.search).get('tab') || 'market';
+    activate(['market', 'mcp', 'plugins', 'update'].includes(initial) ? initial : 'market');
+    loadMarket(); loadMcp(); loadPlugins();
+  </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# 依赖
+node_modules/
+.npm-cache/
+harness/node_modules/
+
+# 打包产物
+dist/
+dist-app/
+
+# 本地运行时（node.exe 按 README 下载）
+node-win-x64.zip
+runtime/node.exe
+runtime/pnpm.cmd
+
+# 日志与临时文件
+*.log
+rewind-test.log
+.dsh-vision-toolkit/
+
+# 系统文件
+Thumbs.db
+Desktop.ini
+
+# 编辑器
+.vscode/
+.idea/

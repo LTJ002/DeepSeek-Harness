@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek Harness — 启动失败</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; }
+  body {
+    display: flex; align-items: center; justify-content: center; padding: 32px;
+    background: radial-gradient(1200px 700px at 50% -10%, #1a1424 0%, #0b0e14 55%, #06080d 100%);
+    color: #e8ecf5; font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  }
+  .card { max-width: 720px; width: 100%; text-align: center; }
+  .badge {
+    width: 72px; height: 72px; margin: 0 auto 22px; border-radius: 22px;
+    background: rgba(248, 113, 113, .12); border: 1px solid rgba(248, 113, 113, .4);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 34px; color: #f87171;
+  }
+  h1 { font-size: 20px; font-weight: 600; }
+  pre {
+    margin: 20px auto 0; max-width: 680px; max-height: 260px; overflow: auto;
+    text-align: left; white-space: pre-wrap; word-break: break-all;
+    background: rgba(5, 8, 15, .7); border: 1px solid rgba(255,255,255,.08);
+    border-radius: 12px; padding: 16px; font-size: 12px; line-height: 1.6; color: #c9d2e3;
+  }
+  .actions { margin-top: 22px; display: flex; gap: 12px; justify-content: center; }
+  button {
+    border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05);
+    color: #e8ecf5; padding: 9px 20px; border-radius: 10px; font-size: 13px;
+    cursor: pointer; transition: all .15s ease;
+  }
+  button:hover { background: rgba(255,255,255,.12); }
+  button.primary { background: #2f6fed; border-color: #2f6fed; }
+  button.primary:hover { background: #3d7dff; }
+  .hint { margin-top: 18px; color: #6d7689; font-size: 12px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">!</div>
+    <h1>Harness 服务启动失败</h1>
+    <pre id="detail">加载中…</pre>
+    <div class="actions">
+      <button class="primary" id="restart">重新启动</button>
+      <button id="quit">退出应用</button>
+    </div>
+    <div class="hint" id="logHint"></div>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const msg = params.get('message');
+    document.getElementById('detail').textContent = msg || '未知错误';
+
+    document.getElementById('restart').addEventListener('click', () => {
+      window.dshDesktop && window.dshDesktop.restart();
+    });
+    document.getElementById('quit').addEventListener('click', () => {
+      if (window.dshDesktop && window.dshDesktop.quit) { window.dshDesktop.quit(); return; }
+      window.close();
+    });
+
+    if (window.dshDesktop && window.dshDesktop.logPath) {
+      window.dshDesktop.logPath().then((p) => {
+        if (p) document.getElementById('logHint').textContent = '完整日志：' + p;
+      }).catch(() => {});
+    }
+  </script>
+</body>
+</html>

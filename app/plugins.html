@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>插件管理</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #ffffff; color: #0f1115; font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; padding: 24px; }
+  h1 { font-size: 18px; font-weight: 600; }
+  .sub { color: #81858c; font-size: 12px; margin-top: 6px; }
+  .row { display: flex; gap: 8px; margin: 16px 0; }
+  input { flex: 1; border: 1px solid #d5d8df; border-radius: 8px; padding: 9px 12px; font-size: 13px; outline: none; }
+  input:focus { border-color: #0f1115; }
+  button { border: 1px solid #0f1115; background: #fff; color: #0f1115; padding: 9px 16px; border-radius: 8px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  button:hover { background: #0f1115; color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  button:disabled:hover { background: #fff; color: #0f1115; }
+  h2 { font-size: 13px; font-weight: 600; color: #81858c; margin-top: 20px; }
+  ul { list-style: none; margin-top: 8px; font-size: 13px; }
+  li { padding: 7px 0; border-bottom: 1px solid #ececf0; display: flex; justify-content: space-between; gap: 10px; }
+  li span:first-child { font-family: Consolas, "Courier New", monospace; }
+  .tag { color: #81858c; font-size: 12px; }
+  pre { margin-top: 12px; background: #f6f7f9; border: 1px solid #ececf0; border-radius: 10px; padding: 12px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; }
+  .note { margin-top: 12px; color: #81858c; font-size: 12px; line-height: 1.7; }
+</style>
+</head>
+<body>
+  <h1>插件管理</h1>
+  <div class="sub">在 web profile（~/.dsh/profiles/web）中安装/查看插件，使用内置 pnpm，无需自行安装环境</div>
+  <div class="row">
+    <input id="pkg" placeholder="插件包名，例如 @deepseek-ai/dsh-xxx" spellcheck="false">
+    <button id="install">安装</button>
+    <button id="close">关闭</button>
+  </div>
+  <h2>已安装依赖</h2>
+  <ul id="deps"></ul>
+  <h2>已启用的 Bundle 层</h2>
+  <ul id="bundles"></ul>
+  <pre id="log" style="display:none"></pre>
+  <div class="note">提示：安装的是 npm 包名。安装完成后需要重启应用（或“重新启动”Harness）才会加载新的 bundle 插件。</div>
+  <script>
+    const deps = document.getElementById('deps');
+    const bundles = document.getElementById('bundles');
+    const log = document.getElementById('log');
+    async function refresh() {
+      try {
+        const info = await window.dshDesktop.listPlugins();
+        deps.innerHTML = info.dependencies.length
+          ? info.dependencies.map((d) => `<li><span>${escapeHtml(d)}</span><span class="tag">依赖</span></li>`).join('')
+          : '<li><span>无</span></li>';
+        bundles.innerHTML = info.bundles.length
+          ? info.bundles.map((b) => `<li><span>${escapeHtml(b)}</span><span class="tag">bundle</span></li>`).join('')
+          : '<li><span>无</span></li>';
+      } catch (e) {
+        const msg = escapeHtml(e && e.message ? e.message : String(e));
+        deps.innerHTML = `<li><span>加载失败：${msg}</span></li>`;
+        bundles.innerHTML = '';
+      }
+    }
+    function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+    document.getElementById('install').addEventListener('click', async () => {
+      const pkg = document.getElementById('pkg').value.trim();
+      if (!pkg) return;
+      const btn = document.getElementById('install');
+      btn.disabled = true; btn.textContent = '安装中…';
+      log.style.display = 'block'; log.textContent = `$ pnpm add ${pkg}\n`;
+      try {
+        const result = await window.dshDesktop.installPlugin(pkg);
+        log.textContent += (result.log || '(无输出)') + (result.ok ? '\n\n✔ 安装完成' : '\n\n✖ 安装失败');
+      } catch (e) {
+        log.textContent += '\n\n✖ ' + (e && e.message ? e.message : String(e));
+      } finally {
+        btn.disabled = false; btn.textContent = '安装';
+        refresh();
+      }
+    });
+    document.getElementById('close').addEventListener('click', () => window.close());
+    refresh();
+  </script>
+</body>
+</html>

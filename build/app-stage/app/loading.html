@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek Harness</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    background: #ffffff;
+    color: #0f1115;
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    user-select: none; overflow: hidden;
+  }
+  .box { text-align: center; padding: 40px; }
+  .logo {
+    width: 72px; height: 72px; margin: 0 auto 24px; display: block;
+    animation: breathe 2.4s ease-in-out infinite;
+  }
+  h1 { font-size: 22px; font-weight: 600; letter-spacing: .5px; color: #0f1115; }
+  p { margin-top: 12px; color: #81858c; font-size: 13px; letter-spacing: 1px; }
+  .dots { margin-top: 26px; display: inline-flex; gap: 8px; }
+  .dots i {
+    width: 8px; height: 8px; border-radius: 50%; background: #0f1115;
+    animation: bounce 1.2s ease-in-out infinite;
+  }
+  .dots i:nth-child(2) { animation-delay: .15s; }
+  .dots i:nth-child(3) { animation-delay: .3s; }
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.08); opacity: .72; }
+  }
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); opacity: .35; }
+    50% { transform: translateY(-7px); opacity: 1; }
+  }
+</style>
+</head>
+<body>
+  <div class="box">
+    <img class="logo" src="whale.svg" alt="DeepSeek Harness">
+    <h1>DeepSeek Harness</h1>
+    <p>正在启动 Harness 服务… 首次启动初始化约需 1–2 分钟</p>
+    <div class="dots"><i></i><i></i><i></i></div>
+  </div>
+</body>
+</html>
