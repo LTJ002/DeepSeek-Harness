@@ -22,14 +22,14 @@ DeepSeek Harness Desktop (`dsh-desktop`) is a Windows desktop application built 
 | Update checker | Detects new releases from GitHub Releases and prompts download |
 | Conversation & file rollback | `/rewind` command, "Rollback to this message" on hover, double-press `Esc` with empty input |
 | Fullscreen | `F11` toggles fullscreen without hiding any controls |
-| Multimodal kernel (0.1.3, rc.8) | Native DeepSeek image requests, `/goal`/`/plan` image+text input, @-menu file and conversation references; Claude Code / Codex subagents as Profile Bundles; Windows PTY persistent PowerShell sessions |
-| Window auto-reconnect (0.1.3) | Auto-reconnects to the new port after kernel restarts (10s debounce) — no more grey freeze, no manual restart |
-| Offline preloaded plugins (0.1.3) | Default plugins bundled inside the package — offline fresh install, faster first launch; failed plugins are not reinstalled on every startup |
-| Log UX (0.1.3) | Plugin install logs auto-collapse after 60s; "Clear log" buttons on the link/command install and installed tabs; binarised high-DPI tray icon |
+| Multimodal kernel (rc.8) | Native DeepSeek image requests, `/goal`/`/plan` image+text input, @-menu file and conversation references; Claude Code / Codex subagents as Profile Bundles; Windows PTY persistent PowerShell sessions |
+| Window auto-reconnect | Auto-reconnects to the new port after kernel restarts (10s debounce) — no more grey freeze, no manual restart |
+| Offline preloaded plugins | Default plugins bundled inside the package — offline fresh install, faster first launch; failed plugins are not reinstalled on every startup |
+| Log UX | Plugin install logs auto-collapse after 60s; "Clear log" buttons on the link/command install and installed tabs; binarised high-DPI tray icon |
 
 ### Bundled Default Plugins
 
-Installed automatically on first launch (dsh-better-sidebar, dsh-at-file, dsh-token-usage and 8 more) — ready to use out of the box. Since 0.1.3 they are bundled inside the package (preloaded-plugins) for fully offline installs.
+Installed automatically on first launch (dsh-better-sidebar, dsh-at-file, dsh-token-usage and 8 more) — ready to use out of the box. Bundled inside the package (preloaded-plugins) for fully offline installs.
 
 ## Installation
 

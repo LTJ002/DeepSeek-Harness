@@ -22,14 +22,14 @@ DeepSeek Harness 桌面版（`dsh-desktop`）是一款 Windows 桌面应用，�
 | 检查更新 | 从 GitHub Releases 检测新版本，提示下载安装 |
 | 对话与文件联动回滚 | `/rewind` 命令、消息悬停"回滚到此消息"、输入框为空双击 Esc |
 | 全屏 | F11 进入/退出全屏，不隐藏任何操作入口 |
-| 多模态内核（0.1.3，rc.8） | DeepSeek 原生图片请求、`/goal`/`/plan` 图文输入、@ 菜单引用文件和会话；Claude Code 与 Codex 子代理可按需安装为 Profile Bundle；Windows PTY 持久 PowerShell 会话 |
-| 窗口自动重连（0.1.3） | 内核重启换端口后窗口自动重连新地址（10 秒防抖），不再灰屏卡死，无需手动重启 |
-| 离线预装插件（0.1.3） | 默认插件随安装包内置，全新安装免联网、首次启动更快；启动失败插件不再重复安装 |
-| 日志体验（0.1.3） | 插件安装日志 60 秒自动收起，「链接/命令安装」与「已安装」页可一键清除日志；托盘图标去除黑边、高清显示 |
+| 多模态内核（rc.8） | DeepSeek 原生图片请求、`/goal`/`/plan` 图文输入、@ 菜单引用文件和会话；Claude Code 与 Codex 子代理可按需安装为 Profile Bundle；Windows PTY 持久 PowerShell 会话 |
+| 窗口自动重连 | 内核重启换端口后窗口自动重连新地址（10 秒防抖），不再灰屏卡死，无需手动重启 |
+| 离线预装插件 | 默认插件随安装包内置，全新安装免联网、首次启动更快；启动失败插件不再重复安装 |
+| 日志体验 | 插件安装日志 60 秒自动收起，「链接/命令安装」与「已安装」页可一键清除日志；托盘图标去除黑边、高清显示 |
 
 ### 内置默认插件
 
-首次启动自动安装（dsh-better-sidebar、dsh-at-file、dsh-token-usage 等 8 个），开箱即用；0.1.3 起随安装包内置（preloaded-plugins），免联网。
+首次启动自动安装（dsh-better-sidebar、dsh-at-file、dsh-token-usage 等 8 个），开箱即用；随安装包内置（preloaded-plugins），免联网。
 
 ## 安装与使用
 
