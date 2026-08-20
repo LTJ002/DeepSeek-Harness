@@ -4,10 +4,10 @@
 
 ## 项目简介
 
-DeepSeek Harness 桌面版（`dsh-desktop`）是一款 Windows 桌面应用，内核基于 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（`0.1.0-rc.7`）二次开发，将 `dsh web` 的 Web 界面封装为原生 Electron 桌面应用。
+DeepSeek Harness 桌面版（`dsh-desktop`）是一款 Windows 桌面应用，内核基于 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（`0.1.0-rc.8`）二次开发，将 `dsh web` 的 Web 界面封装为原生 Electron 桌面应用。
 
 - 双击启动，自动拉起内置的 `dsh web` 服务（`http://127.0.0.1:<随机端口>`），在原生窗口打开界面
-- 完全自包含：内置 Electron 43 + Node.js 22.19 + 完整 `@deepseek-ai/dsh@0.1.0-rc.7`，不依赖系统 Node.js
+- 完全自包含：内置 Electron 43 + Node.js 22.19 + 完整 `@deepseek-ai/dsh@0.1.0-rc.8`，不依赖系统 Node.js
 - 与命令行版共享 `~/.dsh`（profile / 会话 / 存储全部通用）
 - 默认工作目录：`%USERPROFILE%\DeepSeekHarness`
 
@@ -31,8 +31,8 @@ DeepSeek Harness 桌面版（`dsh-desktop`）是一款 Windows 桌面应用，�
 
 | 产物 | 说明 |
 | --- | --- |
-| `DeepSeek Harness Setup 0.1.2.exe` | 安装版：安装到自定义目录，创建开始菜单/桌面快捷方式，自动添加 Defender 排除（静默） |
-| `DeepSeek Harness 0.1.2 Portable.exe` | 便携版：解压到 exe 旁 `app\` 目录，二次启动秒开；版本不符自动重新解压（支持更新换代） |
+| `DeepSeek Harness Setup 0.1.3.exe` | 安装版：安装到自定义目录，创建开始菜单/桌面快捷方式，自动添加 Defender 排除（静默） |
+| `DeepSeek Harness 0.1.3 Portable.exe` | 便携版：解压到 exe 旁 `app\` 目录，二次启动秒开；版本不符自动重新解压（支持更新换代） |
 
 ### 便携版说明
 

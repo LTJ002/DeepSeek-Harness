@@ -4,10 +4,10 @@
 
 ## Overview
 
-DeepSeek Harness Desktop (`dsh-desktop`) is a Windows desktop application built on the [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) kernel (`0.1.0-rc.7`). It wraps the `dsh web` Web UI into a native Electron shell.
+DeepSeek Harness Desktop (`dsh-desktop`) is a Windows desktop application built on the [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) kernel (`0.1.0-rc.8`). It wraps the `dsh web` Web UI into a native Electron shell.
 
 - Double-click to launch: auto-starts the bundled `dsh web` server (`http://127.0.0.1:<random port>`) and opens the UI in a native window
-- Fully self-contained: bundles Electron 43 + Node.js 22.19 + the complete `@deepseek-ai/dsh@0.1.0-rc.7` package — no system Node.js required
+- Fully self-contained: bundles Electron 43 + Node.js 22.19 + the complete `@deepseek-ai/dsh@0.1.0-rc.8` package — no system Node.js required
 - Shares `~/.dsh` with the CLI version (profiles / sessions / storage all shared)
 - Default working directory: `%USERPROFILE%\DeepSeekHarness`
 
@@ -31,8 +31,8 @@ Installed automatically on first launch (dsh-better-sidebar, dsh-at-file, dsh-to
 
 | Artifact | Description |
 | --- | --- |
-| `DeepSeek Harness Setup 0.1.2.exe` | Installer: installs to a chosen directory, creates Start Menu / desktop shortcuts, adds Defender exclusion silently |
-| `DeepSeek Harness 0.1.2 Portable.exe` | Portable: extracts to `app\` beside the exe, instant relaunch; auto re-extracts when version mismatches (supports upgrades) |
+| `DeepSeek Harness Setup 0.1.3.exe` | Installer: installs to a chosen directory, creates Start Menu / desktop shortcuts, adds Defender exclusion silently |
+| `DeepSeek Harness 0.1.3 Portable.exe` | Portable: extracts to `app\` beside the exe, instant relaunch; auto re-extracts when version mismatches (supports upgrades) |
 
 ### Portable Notes
 
