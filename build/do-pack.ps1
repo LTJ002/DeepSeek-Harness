@@ -26,6 +26,8 @@ Get-ChildItem $dist -Filter 'DeepSeek Harness*.exe' -ErrorAction SilentlyContinu
 Write-Output "== [2/8] copy electron runtime =="
 Get-ChildItem -LiteralPath $electronDist -Force | Where-Object { $_.Name -ne 'd3dcompiler_47.dll' } | Copy-Item -Destination $appDir -Recurse -Force
 Rename-Item (Join-Path $appDir 'electron.exe') 'DeepSeek Harness.exe'
+# 只保留中英文语言包，删除其余 locale（省约 40MB）
+Get-ChildItem (Join-Path $appDir 'locales') -Filter '*.pak' -ErrorAction SilentlyContinue | Where-Object { $_.BaseName -notin @('en-US', 'zh-CN') } | Remove-Item -Force
 
 Write-Output "== [3/8] build app.asar from source =="
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
