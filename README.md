@@ -35,8 +35,8 @@ Installed automatically on first launch (dsh-better-sidebar, dsh-at-file, dsh-to
 
 | Artifact | Description |
 | --- | --- |
-| `DeepSeek Harness Setup 0.1.3.exe` | Installer: installs to a chosen directory, creates Start Menu / desktop shortcuts, adds Defender exclusion silently |
-| `DeepSeek Harness 0.1.3 Portable.exe` | Portable: extracts to `app\` beside the exe, instant relaunch; auto re-extracts when version mismatches (supports upgrades) |
+| `DeepSeek Harness Setup 0.1.3.1.exe` | Installer: installs to a chosen directory, creates Start Menu / desktop shortcuts, adds Defender exclusion silently |
+| `DeepSeek Harness 0.1.3.1 Portable.exe` | Portable: extracts to `app\` beside the exe, instant relaunch; auto re-extracts when version mismatches (supports upgrades) |
 
 ### Portable Notes
 

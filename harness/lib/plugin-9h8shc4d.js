@@ -108,7 +108,8 @@ function runPlugin(profile, args) {
 	const result = spawnSync("pnpm", args.map((argument) => anchorPathSpec(argument, process.cwd())), {
 		cwd: dir,
 		stdio: "inherit",
-		shell: process.platform === "win32"
+		shell: process.platform === "win32",
+		windowsHide: true
 	});
 	if (result.error !== void 0) {
 		if (result.error.code === "ENOENT") {

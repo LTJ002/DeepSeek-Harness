@@ -35,8 +35,8 @@ DeepSeek Harness 桌面版（`dsh-desktop`）是一款 Windows 桌面应用，�
 
 | 产物 | 说明 |
 | --- | --- |
-| `DeepSeek Harness Setup 0.1.3.exe` | 安装版：安装到自定义目录，创建开始菜单/桌面快捷方式，自动添加 Defender 排除（静默） |
-| `DeepSeek Harness 0.1.3 Portable.exe` | 便携版：解压到 exe 旁 `app\` 目录，二次启动秒开；版本不符自动重新解压（支持更新换代） |
+| `DeepSeek Harness Setup 0.1.3.1.exe` | 安装版：安装到自定义目录，创建开始菜单/桌面快捷方式，自动添加 Defender 排除（静默） |
+| `DeepSeek Harness 0.1.3.1 Portable.exe` | 便携版：解压到 exe 旁 `app\` 目录，二次启动秒开；版本不符自动重新解压（支持更新换代） |
 
 ### 便携版说明
 

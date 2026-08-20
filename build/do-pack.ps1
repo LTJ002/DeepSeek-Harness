@@ -67,6 +67,7 @@ Copy-Item (Join-Path $root 'plugins') (Join-Path $resDir 'plugins') -Recurse -Fo
 
 # 离线预装默认插件：把本机 profile 已装的插件（含依赖，junction 解引用为平铺副本）
 # 打进 resources/preloaded-plugins，新装用户免联网安装（ensureDefaultPlugins 检测到即离线复制）
+# 用户卸载后写入禁用名单，启动不再强制装回（自由卸载）
 Write-Output "== [4.5/8] preload profile plugins =="
 $profileNm = Join-Path $env:USERPROFILE '.dsh\profiles\web\node_modules'
 $preloadDir = Join-Path $resDir 'preloaded-plugins'
@@ -89,7 +90,7 @@ Copy-Item (Join-Path $electronDist 'd3dcompiler_47.dll') (Join-Path $extraDir 'd
 
 Write-Output "== [6/8] rcedit exe metadata =="
 $exe = Join-Path $appDir 'DeepSeek Harness.exe'
-& (Join-Path $root 'build\rcedit-x64.exe') $exe --set-icon (Join-Path $root 'build\icon.ico') --set-version-string 'ProductName' 'DeepSeek Harness' --set-version-string 'FileDescription' 'DeepSeek Harness Setup' --set-file-version $ver4 --set-product-version $ver4
+& (Join-Path $root 'build\rcedit-x64.exe') $exe --set-icon (Join-Path $root 'build\icon.ico') --set-version-string 'ProductName' 'DeepSeek Harness' --set-version-string 'FileDescription' 'DeepSeek Harness' --set-file-version $ver4 --set-product-version $ver4
 if ($LASTEXITCODE -ne 0) { throw "rcedit failed: $LASTEXITCODE" }
 
 Write-Output "== [7/8] makensis =="

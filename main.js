@@ -549,7 +549,8 @@ let sessionWarmupTimer = null;
 let dshStartupTime = 0;
 let startupEmptyCleanupDone = false;
 // 清理启动时 Web UI 自动创建的空会话（无任何用户/助手消息，只有初始化 seed 事件）。
-// 只处理“启动后新建”且“无消息”的会话，且每次启动只执行一次；清理=移入回收站，可恢复。
+// 只处理“启动后新建”且“无消息”的会话，且每次启动只执行一次；空会话无恢复价值，直接删除，
+// 不再移入回收站（避免回收站堆积非用户删除的垃圾记录）。
 async function cleanupStartupEmptySessions() {
   if (startupEmptyCleanupDone) return;
   const files = [];
@@ -563,19 +564,15 @@ async function cleanupStartupEmptySessions() {
       const summary = await sessionSummaryFromBuf(await fs.promises.readFile(file));
       if (summary && !summary.lastUserMessageId) {
         const dir = path.dirname(file);
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const rel = path.relative(sessionsRoot, dir);
-        const dest = path.join(trashRoot(), stamp, rel);
-        await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-        await fs.promises.rename(dir, dest);
-        cleaned.push(rel);
+        await fs.promises.rm(dir, { recursive: true, force: true });
+        cleaned.push(path.relative(sessionsRoot, dir));
       }
     } catch {}
     await new Promise((resolve) => setImmediate(resolve));
   }
   startupEmptyCleanupDone = true;
   if (cleaned.length) {
-    appendLog('[desktop] 清理启动产生的空会话 ' + cleaned.length + ' 个（已移入回收站）：' + cleaned.join('、') + '\n');
+    appendLog('[desktop] 清理启动产生的空会话 ' + cleaned.length + ' 个（直接删除）：' + cleaned.join('、') + '\n');
     invalidateSessionListsCache();
   }
 }
@@ -783,6 +780,8 @@ async function ensureMcpAutoSync() {
 
 
 // 打包分发时内置的默认插件（首次启动自动安装；已安装则跳过，老用户升级不受影响）
+// 默认插件：随安装包离线预装（preloaded-plugins），开箱即用；用户卸载后写入禁用名单，
+// 下次启动不再强制装回（尊重用户自由卸载，避免内核更新后插件不适配时无法卸载）
 const DEFAULT_PROFILE_PLUGINS = {
   '@anionex/dsh-vision-toolkit': '^0.1.6',
   '@huanlin/dsh-plugin-better-sidebar-plugin-office': '^0.1.0',
@@ -790,9 +789,20 @@ const DEFAULT_PROFILE_PLUGINS = {
   'dsh-at-file': 'git+https://github.com/omdsh-dev/dsh-at-file.git',
   'dsh-better-sidebar': '^0.13.1',
   'dsh-digipet': 'https://github.com/swaylq/dsh-digipet/archive/refs/heads/main.tar.gz',
-  'dsh-smooth-stream': '^0.3.1',
-  'dsh-token-usage': 'git+https://github.com/LeemanCheung/dsh-token-usage.git',
 };
+// 用户主动卸载的默认插件名单：卸载后不再自动装回，尊重"用户自由卸载"
+const DISABLED_MARKER = path.join(profileDir(), '.default-plugins-disabled.json');
+function readDisabledDefaults() {
+  try { return readJsonSafe(DISABLED_MARKER) || {}; } catch { return {}; }
+}
+function saveDisabledDefaults(map) {
+  try { fs.writeFileSync(DISABLED_MARKER, JSON.stringify(map, null, 2), 'utf8'); } catch {}
+}
+function markDefaultPluginDisabled(pkg) {
+  if (typeof pkg !== 'string' || !pkg) return;
+  const map = readDisabledDefaults();
+  if (!map[pkg]) { map[pkg] = Date.now(); saveDisabledDefaults(map); }
+}
 async function ensureDefaultPlugins() {
   // 离线预装：安装包分发时附带 resources/preloaded-plugins（do-pack 打包时从
   // profile 抓取的已装插件+依赖平铺副本）。存在该目录则直接复制，不再在线 pnpm。
@@ -800,7 +810,9 @@ async function ensureDefaultPlugins() {
   if (fs.existsSync(preloaded)) {
     let copied = 0;
     const fails = [];
+    const disabled = readDisabledDefaults();
     for (const name of Object.keys(DEFAULT_PROFILE_PLUGINS)) {
+      if (disabled[name]) continue;
       const rel = name.split('/');
       const src = path.join(preloaded, ...rel);
       if (!fs.existsSync(src)) continue;
@@ -829,8 +841,10 @@ async function ensureDefaultPlugins() {
   const saveFailed = () => {
     try { fs.writeFileSync(FAILED_MARKER, JSON.stringify(failed, null, 2), 'utf8'); } catch {}
   };
+  const disabled = readDisabledDefaults();
   const todo = [];
   for (const [name, spec] of Object.entries(DEFAULT_PROFILE_PLUGINS)) {
+    if (disabled[name]) continue;
     const installed = fs.existsSync(path.join(profileDir(), 'node_modules', name));
     if (!installed && !deps[name] && !failed[name]) todo.push([name, spec]);
   }
@@ -1549,6 +1563,7 @@ function uninstallPlugin(pkg, force) {
     const inBundles = bundles.includes(pkg);
     if (!inDeps && inBundles) {
       const r = syncBundleAfterUninstall(pkg, { ok: true, log: '仅从 bundle 层移除（未在 dependencies 中，无需 pnpm remove）' });
+      markDefaultPluginDisabled(pkg);
       // 统一热更新：卸载成功后软刷新让移除生效（与安装路径一致，不依赖前端手动调用）
       await reloadHarness({ soft: true, msg: '插件已卸载，正在生效…' }).catch(() => {});
       return r;
@@ -1568,6 +1583,7 @@ function uninstallPlugin(pkg, force) {
     }
     if (result.ok) {
       const r = syncBundleAfterUninstall(pkg, result);
+      markDefaultPluginDisabled(pkg);
       // 统一热更新：卸载成功后软刷新让移除生效
       await reloadHarness({ soft: true, msg: '插件已卸载，正在生效…' }).catch(() => {});
       return r;
@@ -3311,6 +3327,48 @@ ipcMain.handle('dsh:list-plugins', () => listPlugins());
 ipcMain.handle('dsh:plugin-job-status', () => pluginJobStatusList());
 ipcMain.handle('dsh:install-plugin', (_e, pkg) => installPlugin(pkg));
 ipcMain.handle('dsh:uninstall-plugin', (_e, pkg, force) => uninstallPlugin(pkg, force === true));
+ipcMain.handle('dsh:disabled-defaults-list', () => readDisabledDefaults());
+ipcMain.handle('dsh:default-plugins-list', () => Object.keys(DEFAULT_PROFILE_PLUGINS));
+ipcMain.handle('dsh:disabled-defaults-add', (_e, pkg) => {
+  if (typeof pkg === 'string' && pkg) markDefaultPluginDisabled(pkg);
+  return { ok: true };
+});
+ipcMain.handle('dsh:disabled-defaults-restore', (_e, pkg) => {
+  if (typeof pkg === 'string' && pkg) {
+    const map = readDisabledDefaults();
+    if (Object.prototype.hasOwnProperty.call(map, pkg)) {
+      delete map[pkg];
+      saveDisabledDefaults(map);
+    }
+  }
+  return { ok: true };
+});
+// 通用市场禁用名单：用户禁用的插件不再出现在插件市场安装流程（独立于默认插件禁用）
+const MARKET_DISABLED_MARKER = path.join(profileDir(), '.market-disabled.json');
+function readMarketDisabled() {
+  try { return readJsonSafe(MARKET_DISABLED_MARKER) || {}; } catch { return {}; }
+}
+function saveMarketDisabled(map) {
+  try { fs.writeFileSync(MARKET_DISABLED_MARKER, JSON.stringify(map, null, 2), 'utf8'); } catch {}
+}
+ipcMain.handle('dsh:market-disabled-list', () => readMarketDisabled());
+ipcMain.handle('dsh:market-disabled-add', (_e, repo) => {
+  if (typeof repo === 'string' && repo) {
+    const map = readMarketDisabled();
+    if (!map[repo]) { map[repo] = Date.now(); saveMarketDisabled(map); }
+  }
+  return { ok: true };
+});
+ipcMain.handle('dsh:market-disabled-remove', (_e, repo) => {
+  if (typeof repo === 'string' && repo) {
+    const map = readMarketDisabled();
+    if (Object.prototype.hasOwnProperty.call(map, repo)) {
+      delete map[repo];
+      saveMarketDisabled(map);
+    }
+  }
+  return { ok: true };
+});
 ipcMain.handle('dsh:ai-install-plugin', (_e, pkg) => aiInstallPlugin(pkg));
 ipcMain.handle('dsh:check-update', () => checkUpdate());
 // 下载并启动安装更新：下载 release 安装包到临时目录，然后启动安装器（覆盖安装，弹 UAC）

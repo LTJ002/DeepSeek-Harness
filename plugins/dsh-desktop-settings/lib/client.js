@@ -42,6 +42,15 @@ window.__ModuleLoader__.load({
       "安装": "Install",
       "已安装": "Installed",
       "卸载": "Uninstall",
+      "禁用": "Disable",
+      "禁用名单": "Disabled List",
+      "市场禁用": "Market-disabled",
+      "默认插件": "Default plugin",
+      "恢复": "Restore",
+      "被禁用的插件不再安装；默认插件被禁用后启动不再自动装回。": "Disabled plugins are no longer installed; disabled default plugins are not auto-restored on startup.",
+      "不再安装": "Not installed",
+      "启动不再自动装回": "Not auto-restored on startup",
+      "没有禁用的插件": "No disabled plugins",
       "依赖": "Dependency",
       "正在检测…": "Detecting…",
       "检测失败：": "Detection failed: ",
@@ -479,7 +488,10 @@ window.__ModuleLoader__.load({
 const [aiBusy, setAiBusy] = useState(false);
 const [aiLog, setAiLog] = useState("");
 const [lastFailed, setLastFailed] = useState(null);
-const [uninstallingPkg, setUninstallingPkg] = useState(null);
+      const [uninstallingPkg, setUninstallingPkg] = useState(null);
+      const [disabledDefaults, setDisabledDefaults] = useState({});
+      const [defaultPlugins, setDefaultPlugins] = useState([]);
+      const [marketDisabled, setMarketDisabled] = useState({});
       const [query, setQuery] = useState("");
       const deferredQuery = useDeferredValue(query); // 搜索框输入时延迟过滤，保持输入流畅
       const [catFilter, setCatFilter] = useState("全部");
@@ -494,6 +506,19 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
         api2.pluginUpdateCheck().then((r) => {
           if (alive && r && r.ok && Array.isArray(r.updates)) setPluginUpdates(r);
         }).catch(() => {});
+        return () => { alive = false; };
+      }, []);
+      // 禁用名单：用户主动禁用的默认插件（卸载后不再自动装回），可在此查看与恢复
+      const api2 = window.dshDesktop;
+      useEffect(() => {
+        if (!api2 || typeof api2.disabledDefaultsList !== "function" || typeof api2.defaultPluginsList !== "function") return;
+        let alive = true;
+        Promise.all([api2.disabledDefaultsList(), api2.defaultPluginsList()]).then(([dis, defaults]) => {
+          if (alive) { setDisabledDefaults(dis && typeof dis === "object" ? dis : {}); setDefaultPlugins(Array.isArray(defaults) ? defaults : []); }
+        }).catch(() => {});
+        if (typeof api2.marketDisabledList === "function") {
+          api2.marketDisabledList().then((m) => { if (alive) setMarketDisabled(m && typeof m === "object" ? m : {}); }).catch(() => {});
+        }
         return () => { alive = false; };
       }, []);
       // 重启倒计时：插件变更后自动重启生效，可取消/立即重启
@@ -693,6 +718,56 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
         refresh();
       }
 
+      // 禁用默认插件：标记禁用名单 + 卸载（下次启动不再自动装回）
+      async function disableDefaultPlugin(dep) {
+        if (installing) return;
+        if (!window.confirm(`禁用 ${dep}？\n将卸载它并加入禁用名单，之后启动不再自动安装。可在插件市场“禁用名单”中恢复。`)) return;
+        setInstalling(true);
+        setUninstallingPkg(dep);
+        setInstallLog(`$ 禁用 ${dep}（标记 + 卸载）\n`);
+        try {
+          if (api.disabledDefaultsAdd) await api.disabledDefaultsAdd(dep);
+          const r = await api.uninstallPlugin(dep, false);
+          setInstallLog((l) => l + (r.log || "(无输出)") + (r.ok ? "\n✔ 已禁用并卸载" : "\n✖ 卸载失败（已加入禁用名单，重启后不再自动安装）"));
+          setDisabledDefaults((prev) => ({ ...prev, [dep]: Date.now() }));
+        } catch (e) {
+          setInstallLog((l) => l + "\n✖ " + String(e && e.message || e));
+        } finally {
+          setInstalling(false);
+          setUninstallingPkg(null);
+        }
+        refresh();
+      }
+      // 恢复默认插件：从禁用名单移除（下次启动自动重新安装）
+      async function restoreDefaultPlugin(dep) {
+        if (!window.confirm(`恢复 ${dep}？\n将从禁用名单移除，下次启动会自动重新安装。`)) return;
+        try {
+          if (api.disabledDefaultsRestore) await api.disabledDefaultsRestore(dep);
+          setDisabledDefaults((prev) => { const n = { ...prev }; delete n[dep]; return n; });
+          setInstallLog((l) => l + `\n✔ 已恢复 ${dep}（下次启动自动安装）`);
+        } catch (e) {
+          setInstallLog((l) => l + "\n✖ " + String(e && e.message || e));
+        }
+      }
+      // 市场禁用：禁用后该插件安装按钮变为"禁用"，避免再次安装
+      async function disableMarketPlugin(repo) {
+        if (!window.confirm(`禁用 ${repo}？\n禁用后它在插件市场中的安装按钮会变为“禁用”，避免误装。`)) return;
+        try {
+          if (api.marketDisabledAdd) await api.marketDisabledAdd(repo);
+          setMarketDisabled((prev) => ({ ...prev, [repo]: Date.now() }));
+        } catch (e) {
+          setInstallLog((l) => l + "\n✖ " + String(e && e.message || e));
+        }
+      }
+      async function enableMarketPlugin(repo) {
+        try {
+          if (api.marketDisabledRemove) await api.marketDisabledRemove(repo);
+          setMarketDisabled((prev) => { const n = { ...prev }; delete n[repo]; return n; });
+        } catch (e) {
+          setInstallLog((l) => l + "\n✖ " + String(e && e.message || e));
+        }
+      }
+
       // 已安装且可更新的插件名集合（来自插件更新检查）
       const updatable = new Set((pluginUpdates && Array.isArray(pluginUpdates.updates) ? pluginUpdates.updates : [])
         .filter((u) => u.updateAvailable).map((u) => u.name));
@@ -715,16 +790,16 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
         try { const r2 = await api.pluginUpdateCheck(); if (r2 && r2.ok) setPluginUpdates(r2); } catch {}
       }
       const pluginBusy = installing || pluginJobs.some((job) => job.status === "running");
-      const tabs = [["market", t("插件市场")], ["mcp", t("MCP 服务器")], ["plugins", t("已安装插件")]];
+      const tabs = [["market", t("插件市场")], ["mcp", t("MCP 服务器")], ["plugins", t("已安装插件")], ["disabled", t("禁用")]];
 
       return jsx("div", { style: S.wrap, children: [
         jsx("div", { style: S.nav, children: tabs.map(([id, label]) =>
           jsx("button", { key: id, style: S.navBtn(tab === id), onClick: () => setTab(id), children: label })
         ) }),
         pluginUpdates && Array.isArray(pluginUpdates.updates) && pluginUpdates.updates.length > 0 && jsx("div", { style: S.card, children: [
-          jsx("div", { style: S.row, children: [
-            jsx("span", { style: S.h2, children: t("有 {n} 个插件可更新", { n: pluginUpdates.updates.length }) }),
-            jsx("button", { style: S.btnSmall, onClick: () => { const a3 = window.dshDesktop; if (a3 && a3.pluginUpdateCheck) a3.pluginUpdateCheck().then((r) => { if (r && r.ok) setPluginUpdates(r); }).catch(() => {}); }, children: t("重新检查") })
+          jsx("div", { style: { ...S.row, flexWrap: "nowrap", alignItems: "center" }, children: [
+            jsx("span", { style: { ...S.h2, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: t("有 {n} 个插件可更新", { n: pluginUpdates.updates.length }) }),
+            jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, onClick: () => { const a3 = window.dshDesktop; if (a3 && a3.pluginUpdateCheck) a3.pluginUpdateCheck().then((r) => { if (r && r.ok) setPluginUpdates(r); }).catch(() => {}); }, children: t("重新检查") })
           ] }),
           ...pluginUpdates.updates.map((u) => jsx("div", { key: u.name, style: S.li, children: [
             jsx("span", { style: S.liName, children: esc(u.name) }),
@@ -751,9 +826,9 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
           jsx("pre", { style: S.pre, children: installLog })
         ] }),
           lastFailed && !aiBusy && jsx("div", { style: S.card, children: [
-            jsx("div", { style: S.row, children: [
-              jsx("span", { style: { fontSize: 13 }, children: `常规安装失败：${esc(lastFailed.pkg)}，可让 AI 自动诊断修复` }),
-              jsx("button", { style: S.btn, disabled: pluginBusy, onClick: aiInstallPkg, children: "AI 安装" })
+            jsx("div", { style: { ...S.row, flexWrap: "nowrap", alignItems: "center" }, children: [
+              jsx("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: `常规安装失败：${esc(lastFailed.pkg)}，可用 AI 自动诊断修复` }),
+              jsx("button", { style: { ...S.btn, flexShrink: 0 }, disabled: pluginBusy, onClick: aiInstallPkg, children: "AI 安装" })
             ] })
           ] }),
           aiBusy && jsx("div", { style: S.card, children: jsx("span", { style: { fontSize: 13 }, children: "AI 安装进行中（分析失败原因→自动修复→重试）…" }) }),
@@ -782,10 +857,10 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
                   jsx("button", { style: S.btnSmall, disabled: marketRefreshing, onClick: () => refreshMarket(true), children: marketRefreshing ? t("刷新中…") : t("刷新") })
                 ] }),
                 showRestart && jsx("div", { style: S.card, children: [
-                  jsx("div", { style: S.row, children: [
-                    jsx("span", { style: { fontSize: 13 }, children: `插件变更完成，${restartCountdown ?? ""} 秒后自动重启` }),
-                    jsx("button", { style: S.btn, onClick: () => api.restart(), children: t("立即重启") }),
-                    jsx("button", { style: S.btnSmall, onClick: cancelRestart, children: t("取消") })
+                  jsx("div", { style: { ...S.row, flexWrap: "nowrap", alignItems: "center" }, children: [
+                    jsx("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: `插件变更完成，${restartCountdown ?? ""} 秒后自动重启` }),
+                    jsx("button", { style: { ...S.btn, flexShrink: 0 }, onClick: () => api.restart(), children: t("立即重启") }),
+                    jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, onClick: cancelRestart, children: t("取消") })
                   ] })
                 ] }),
                 ...groups.map((g) => jsx("div", { key: g.category, children: [
@@ -809,7 +884,12 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
                           ? (canUpdate
                             ? jsx("button", { style: S.btnSmall, disabled: pluginBusy || !!status, onClick: () => updatePlugin(installedName), children: status || (pluginBusy ? t("任务进行中…") : t("更新")) })
                             : jsx("span", { style: S.badge(""), children: t("已安装") }))
-                          : jsx("button", { style: S.btnSmall, disabled: pluginBusy || !!status, onClick: () => installRepo(it.repo, it.desc), children: status || (pluginBusy ? t("任务进行中…") : t("安装")) })
+                          : marketDisabled[it.repo]
+                            ? jsx("button", { style: { ...S.btnSmall, color: "#b45309" }, disabled: pluginBusy, onClick: () => enableMarketPlugin(it.repo), children: t("恢复") })
+                            : jsx("div", { style: { display: "flex", gap: 6, alignItems: "center" }, children: [
+                                jsx("button", { style: S.btnSmall, disabled: pluginBusy || !!status, onClick: () => installRepo(it.repo, it.desc), children: status || (pluginBusy ? t("任务进行中…") : t("安装")) }),
+                                jsx("button", { style: { ...S.btnSmall, color: "#b45309" }, disabled: pluginBusy, onClick: () => disableMarketPlugin(it.repo), children: t("禁用") })
+                              ] })
                       ] }),
                       jsx("div", { style: S.desc, children: esc(it.desc) })
                     ] });
@@ -842,19 +922,20 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
           plugins.dependencies.length
             ? plugins.dependencies.map((d) => jsx("div", { key: d, style: S.li, children: [
                 jsx("span", { style: S.liName, children: esc(d) }),
-                jsx("div", { style: S.row, children: [
-                  jsx("span", { style: S.sub, children: t("依赖") }),
-                  updatable.has(d) && jsx("button", { style: S.btnSmall, disabled: pluginBusy, onClick: () => updatePlugin(d), children: pluginBusy ? t("任务进行中…") : t("更新") }),
-                  jsx("button", { style: S.btnSmall, disabled: pluginBusy, onClick: () => uninstallPkg(d), children: uninstallingPkg === d ? "卸载中…" : t("卸载") })
-                ] })
+                jsx("div", { style: { ...S.row, flexWrap: "nowrap" }, children: [
+                jsx("span", { style: { ...S.sub, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: t("依赖") }),
+                updatable.has(d) && jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: pluginBusy, onClick: () => updatePlugin(d), children: pluginBusy ? t("任务进行中…") : t("更新") }),
+                jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: pluginBusy, onClick: () => uninstallPkg(d), children: uninstallingPkg === d ? "卸载中…" : t("卸载") }),
+                defaultPlugins.includes(d) && !disabledDefaults[d] && jsx("button", { style: { ...S.btnSmall, flexShrink: 0, color: "#b45309" }, disabled: pluginBusy, onClick: () => disableDefaultPlugin(d), children: t("禁用") })
+              ] })
               ] }))
             : jsx("div", { style: S.empty, children: t("无") }),
           jsx("div", { style: S.cat, children: t("已启用的 Bundle 层") }),
           plugins.bundles.length ? plugins.bundles.map((b) => jsx("div", { key: b, style: S.li, children: [
             jsx("span", { style: S.liName, children: esc(b) }),
-            jsx("div", { style: S.row, children: [
-              jsx("span", { style: S.sub, children: "bundle" }),
-              jsx("button", { style: S.btnSmall, disabled: pluginBusy, onClick: () => uninstallPkg(b), children: uninstallingPkg === b ? "卸载中…" : t("卸载") })
+            jsx("div", { style: { ...S.row, flexWrap: "nowrap" }, children: [
+              jsx("span", { style: { ...S.sub, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: "bundle" }),
+              jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: pluginBusy, onClick: () => uninstallPkg(b), children: uninstallingPkg === b ? "卸载中…" : t("卸载") })
             ] })
           ] })) : jsx("div", { style: S.empty, children: t("无") }),
           installLog && jsx("div", { children: [
@@ -862,9 +943,9 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
           jsx("pre", { style: S.pre, children: installLog })
         ] }),
           lastFailed && !aiBusy && jsx("div", { style: S.card, children: [
-            jsx("div", { style: S.row, children: [
-              jsx("span", { style: { fontSize: 13 }, children: `常规安装失败：${esc(lastFailed.pkg)}，可让 AI 自动诊断修复` }),
-              jsx("button", { style: S.btn, disabled: pluginBusy, onClick: aiInstallPkg, children: "AI 安装" })
+            jsx("div", { style: { ...S.row, flexWrap: "nowrap", alignItems: "center" }, children: [
+              jsx("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: `常规安装失败：${esc(lastFailed.pkg)}，可用 AI 自动诊断修复` }),
+              jsx("button", { style: { ...S.btn, flexShrink: 0 }, disabled: pluginBusy, onClick: aiInstallPkg, children: "AI 安装" })
             ] })
           ] }),
           aiBusy && jsx("div", { style: S.card, children: jsx("span", { style: { fontSize: 13 }, children: "AI 安装进行中（分析失败原因→自动修复→重试）…" }) }),
@@ -876,6 +957,41 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
               jsx("button", { style: S.btnSmall, onClick: cancelRestart, children: t("取消") })
             ] })
           ] })
+        ] }),
+        tab === "disabled" && jsx("div", { children: [
+          jsx("div", { style: S.rollbackHead, children: [
+            jsx("div", { style: { flex: 1, minWidth: 0 }, children: [
+              jsx("div", { style: S.h2, children: t("禁用名单") }),
+              jsx("div", { style: { ...S.sub, marginTop: 4 }, children: t("被禁用的插件不再安装；默认插件被禁用后启动不再自动装回。") })
+            ] }),
+            jsx("div", { style: { ...S.row, alignItems: "center", flexWrap: "nowrap" }, children: [
+              jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: pluginBusy, onClick: () => { const a4 = window.dshDesktop; if (a4 && a4.marketDisabledList) a4.marketDisabledList().then(setMarketDisabled).catch(() => {}); if (a4 && a4.disabledDefaultsList) a4.disabledDefaultsList().then(setDisabledDefaults).catch(() => {}); }, children: t("刷新") })
+            ] })
+          ] }),
+          Object.keys(marketDisabled).length === 0 && Object.keys(disabledDefaults).length === 0
+            ? jsx("div", { style: S.empty, children: t("没有禁用的插件") })
+            : jsx("div", { children: [
+                Object.keys(marketDisabled).length > 0 && jsx("div", { children: [
+                  jsx("div", { style: S.cat, children: t("市场禁用") }),
+                  ...Object.keys(marketDisabled).map((dep) => jsx("div", { key: "m:" + dep, style: S.card, children: [
+                    jsx("div", { style: { ...S.row, flexWrap: "nowrap", alignItems: "center" }, children: [
+                      jsx("span", { style: { ...S.liName, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: esc(dep) }),
+                      jsx("span", { style: { ...S.sub, flexShrink: 0 }, children: t("不再安装") }),
+                      jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: pluginBusy, onClick: () => enableMarketPlugin(dep), children: t("恢复") })
+                    ] })
+                  ] }))
+                ] }),
+                Object.keys(disabledDefaults).length > 0 && jsx("div", { children: [
+                  jsx("div", { style: S.cat, children: t("默认插件") }),
+                  ...Object.keys(disabledDefaults).map((dep) => jsx("div", { key: "d:" + dep, style: S.card, children: [
+                    jsx("div", { style: { ...S.row, flexWrap: "nowrap", alignItems: "center" }, children: [
+                      jsx("span", { style: { ...S.liName, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: esc(dep) }),
+                      jsx("span", { style: { ...S.sub, flexShrink: 0 }, children: t("启动不再自动装回") }),
+                      jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: pluginBusy, onClick: () => restoreDefaultPlugin(dep), children: t("恢复") })
+                    ] })
+                  ] }))
+                ] })
+              ] })
         ] })
       ] });
     }
@@ -883,8 +999,6 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
     function RollbackSection({ t }) {
       const [rollbackList, setRollbackList] = useState(null);
       const [busy, setBusy] = useState(false);
-      const [checkpoints, setCheckpoints] = useState({ loading: true });
-      const [preview, setPreview] = useState(null);
       const api = window.dshDesktop;
 
       async function loadRollback(force = false) {
@@ -895,15 +1009,6 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
           setRollbackList((prev) => ({ data, refreshing: false }));
         } catch (e) {
           setRollbackList((prev) => (prev && prev.data ? { ...prev, refreshing: false, error: String(e && e.message || e) } : { error: String(e && e.message || e) }));
-        }
-      }
-      async function loadCheckpoints() {
-        setCheckpoints({ loading: true });
-        try {
-          const list = await api.rewindList();
-          setCheckpoints({ data: Array.isArray(list) ? list : (list && list.error ? (() => { throw new Error(list.error); })() : []) });
-        } catch (e) {
-          setCheckpoints({ error: String(e && e.message || e) });
         }
       }
       async function doDelete(item) {
@@ -960,6 +1065,70 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
           setBusy(false);
         }
       }
+      useEffect(() => {
+        loadRollback(false);
+        // 每 20 秒无感自动刷新：外部删除/回滚会话后列表自动同步
+        const iv = setInterval(() => loadRollback(false), 20000);
+        return () => clearInterval(iv);
+      }, []);
+      // 操作结果消息 8 秒后自动消失，避免残留
+      useEffect(() => {
+        if (!rollbackList?.status) return;
+        const t = setTimeout(() => setRollbackList((prev) => (prev ? { ...prev, status: undefined } : prev)), 8000);
+        return () => clearTimeout(t);
+      }, [rollbackList?.status]);
+
+      return jsx("div", { style: S.wrap, children: [
+        jsx("div", { style: S.rollbackHead, children: [
+          jsx("div", { style: { flex: 1, minWidth: 0 }, children: [
+            jsx("div", { style: S.h2, children: t("可回滚的会话") }),
+            jsx("div", { style: { ...S.sub, marginTop: 4 }, children: t("选择会话回滚最后一轮：撤销 edit 修改、移除本轮新建文件，完成后自动刷新会话。") })
+          ] }),
+          jsx("div", { style: { ...S.row, alignItems: "center", flexWrap: "nowrap" }, children: [
+            rollbackList && !rollbackList.loading && !rollbackList.error
+              ? jsx("span", { style: { ...S.sub, whiteSpace: "nowrap" }, children: "共 " + rollbackList.data.length + " 个" })
+              : null,
+            jsx("button", { style: S.btnSmall, disabled: !!rollbackList?.loading || busy, onClick: () => loadRollback(true), children: rollbackList?.loading ? t("刷新中…") : t("刷新") })
+          ] })
+        ] }),
+        rollbackList?.status && jsx("pre", { style: S.pre, children: rollbackList.status }),
+        !rollbackList ? null
+          : !rollbackList.data && rollbackList.error ? jsx("div", { style: S.empty, children: t("扫描失败：") + esc(rollbackList.error) })
+          : !rollbackList.data && rollbackList.loading ? jsx("div", { style: S.empty, children: t("正在扫描会话…") })
+          : rollbackList.data && rollbackList.error ? jsx("div", { style: S.empty, children: t("刷新失败（当前显示上次数据）：") + esc(rollbackList.error) })
+          : !rollbackList.data.length ? jsx("div", { style: S.empty, children: t("没有可回滚的会话") })
+          : rollbackList.data.map((s) => jsx("div", { key: s.file, style: S.card, children: [
+              jsx("div", { style: { ...S.row, flexWrap: "nowrap", alignItems: "center" }, children: [
+                jsx("span", { style: { ...S.name, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "38%" }, children: esc(s.id) }),
+                jsx("span", { style: { ...S.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "32%" }, children: esc(s.cwd) }),
+                jsx("span", { style: { flex: 1 } }),
+                jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: busy, onClick: () => doRollback(s), children: busy ? t("回滚中…") : t("回滚") }),
+                  jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: busy, onClick: () => doDelete(s), children: busy ? t("删除中…") : t("删除") })
+              ] }),
+              jsx("div", { style: S.desc, children: esc(s.lastUserText) }),
+              jsx("div", { style: S.status, children: "发送时间：" + esc(s.time) })
+            ] })),
+      ] });
+    }
+
+    function CheckpointSection({ t }) {
+      const [checkpoints, setCheckpoints] = useState({ loading: true });
+      const [busy, setBusy] = useState(false);
+      const [preview, setPreview] = useState(null);
+      const api = window.dshDesktop;
+
+      async function loadCheckpoints() {
+        // 无感刷新：已有数据时保留旧列表与 status，后台拉新后原位替换（不闪 loading、不吞操作结果消息）
+        setCheckpoints((prev) => (prev && prev.data ? { ...prev, refreshing: true } : { loading: true }));
+        try {
+          const list = await api.rewindList();
+          setCheckpoints((prev) => ({ ...prev, data: Array.isArray(list) ? list : [], refreshing: false, error: undefined }));
+        } catch (e) {
+          setCheckpoints((prev) => (prev && prev.data
+            ? { ...prev, refreshing: false, error: String(e && e.message || e) }
+            : { error: String(e && e.message || e) }));
+        }
+      }
       async function doPreview(cp) {
         if (busy) return;
         setBusy(true);
@@ -983,18 +1152,18 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
           if (r && r.ok) {
             let msg = "✔ " + (plan.total === 0 ? "工作区无差异" : `已恢复 ${plan.total} 个文件`);
             if (r.conversation && !r.conversation.ok) msg += "；对话回滚：" + r.conversation.msg;
-            setRollbackList((prev) => ({ ...prev, status: msg + "，正在刷新会话…" }));
+            setCheckpoints((prev) => ({ ...prev, status: msg + "，正在刷新会话…" }));
             if (typeof api.reloadHarness === "function") {
               const rel = await api.reloadHarness();
-              if (!rel?.ok) setRollbackList((prev) => ({ ...prev, status: "✖ " + (rel?.msg || "刷新失败") }));
+              if (!rel?.ok) setCheckpoints((prev) => ({ ...prev, status: "✖ " + (rel?.msg || "刷新失败") }));
             }
           } else {
-            setRollbackList((prev) => ({ ...prev, status: "✖ " + (r?.msg || "回滚失败") }));
+            setCheckpoints((prev) => ({ ...prev, status: "✖ " + (r?.msg || "回滚失败") }));
           }
           setPreview(null);
           loadCheckpoints();
         } catch (e) {
-          setRollbackList((prev) => ({ ...prev, status: "✖ " + String(e && e.message || e) }));
+          setCheckpoints((prev) => ({ ...prev, status: "✖ " + String(e && e.message || e) }));
         } finally {
           setBusy(false);
         }
@@ -1002,57 +1171,32 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
       async function doUndo() {
         if (busy) return;
         const guard = (checkpoints.data || []).find((c) => c.type === "guard");
-        if (!guard) { setRollbackList((prev) => ({ ...prev, status: t("没有可用的保护检查点") })); return; }
+        if (!guard) { setCheckpoints((prev) => ({ ...prev, status: t("没有可用的保护检查点") })); return; }
         if (!window.confirm("撤销最近一次回滚，把工作区文件恢复到回滚前状态？")) return;
-        setBusy(true);
         try {
           const r = await api.rewindUndo(guard.id);
-          setRollbackList((prev) => ({ ...prev, status: r && r.ok ? "✔ 已恢复到保护检查点" : "✖ " + (r?.msg || "撤销失败") }));
+          setCheckpoints((prev) => ({ ...prev, status: r && r.ok ? "✔ 已恢复到保护检查点" : "✖ " + (r?.msg || "撤销失败") }));
           loadCheckpoints();
         } catch (e) {
-          setRollbackList((prev) => ({ ...prev, status: "✖ " + String(e && e.message || e) }));
+          setCheckpoints((prev) => ({ ...prev, status: "✖ " + String(e && e.message || e) }));
         } finally {
           setBusy(false);
         }
       }
       useEffect(() => {
-        loadRollback(false);
         loadCheckpoints();
-        // 每 20 秒无感自动刷新：外部删除/回滚会话后列表自动同步
-        const iv = setInterval(() => loadRollback(false), 20000);
+        // 每 20 秒无感自动刷新
+        const iv = setInterval(() => loadCheckpoints(), 20000);
         return () => clearInterval(iv);
       }, []);
+      // 操作结果消息 8 秒后自动消失，避免残留
+      useEffect(() => {
+        if (!checkpoints?.status) return;
+        const t = setTimeout(() => setCheckpoints((prev) => (prev ? { ...prev, status: undefined } : prev)), 8000);
+        return () => clearTimeout(t);
+      }, [checkpoints?.status]);
 
       return jsx("div", { style: S.wrap, children: [
-        jsx("div", { style: S.rollbackHead, children: [
-          jsx("div", { style: { flex: 1, minWidth: 0 }, children: [
-            jsx("div", { style: S.h2, children: t("可回滚的会话") }),
-            jsx("div", { style: { ...S.sub, marginTop: 4 }, children: t("选择会话回滚最后一轮：撤销 edit 修改、移除本轮新建文件，完成后自动刷新会话。") })
-          ] }),
-          jsx("div", { style: { ...S.row, alignItems: "center", flexWrap: "nowrap" }, children: [
-            rollbackList && !rollbackList.loading && !rollbackList.error
-              ? jsx("span", { style: { ...S.sub, whiteSpace: "nowrap" }, children: "共 " + rollbackList.data.length + " 个" })
-              : null,
-            jsx("button", { style: S.btnSmall, disabled: !!rollbackList?.loading || busy, onClick: () => loadRollback(true), children: rollbackList?.loading ? t("刷新中…") : t("刷新") })
-          ] })
-        ] }),
-        rollbackList?.status && jsx("pre", { style: S.pre, children: rollbackList.status }),
-        !rollbackList ? null
-          : !rollbackList.data && rollbackList.error ? jsx("div", { style: S.empty, children: t("扫描失败：") + esc(rollbackList.error) })
-          : !rollbackList.data && rollbackList.loading ? jsx("div", { style: S.empty, children: t("正在扫描会话…") })
-          : rollbackList.data && rollbackList.error ? jsx("div", { style: S.empty, children: t("刷新失败（当前显示上次数据）：") + esc(rollbackList.error) })
-          : !rollbackList.data.length ? jsx("div", { style: S.empty, children: t("没有可回滚的会话") })
-          : rollbackList.data.map((s) => jsx("div", { key: s.file, style: S.card, children: [
-              jsx("div", { style: S.row, children: [
-                jsx("span", { style: { ...S.name, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "38%" }, children: esc(s.id) }),
-                jsx("span", { style: { ...S.sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "32%" }, children: esc(s.cwd) }),
-                jsx("span", { style: { flex: 1 } }),
-                jsx("button", { style: S.btnSmall, disabled: busy, onClick: () => doRollback(s), children: busy ? t("回滚中…") : t("回滚") }),
-                  jsx("button", { style: S.btnSmall, disabled: busy, onClick: () => doDelete(s), children: busy ? t("删除中…") : t("删除") })
-              ] }),
-              jsx("div", { style: S.desc, children: esc(s.lastUserText) }),
-              jsx("div", { style: S.status, children: "发送时间：" + esc(s.time) })
-            ] })),
         jsx("div", { style: S.rollbackHead, children: [
           jsx("div", { style: { flex: 1, minWidth: 0 }, children: [
             jsx("div", { style: S.h2, children: t("文件检查点（对话与文件联动回滚）") }),
@@ -1060,20 +1204,20 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
           ] }),
           jsx("div", { style: { ...S.row, alignItems: "center", flexWrap: "nowrap" }, children: [
             (checkpoints.data || []).some((c) => c.type === "guard")
-              ? jsx("button", { style: S.btnSmall, disabled: busy, onClick: doUndo, children: t("撤销上次回滚") })
+              ? jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: busy, onClick: doUndo, children: t("撤销上次回滚") })
               : null,
-            jsx("button", { style: S.btnSmall, disabled: !!checkpoints?.loading || busy, onClick: loadCheckpoints, children: checkpoints?.loading ? t("刷新中…") : t("刷新") })
+            jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: !!checkpoints?.loading || busy, onClick: loadCheckpoints, children: checkpoints?.loading ? t("刷新中…") : t("刷新") })
           ] })
         ] }),
-        checkpoints.loading ? jsx("div", { style: S.empty, children: t("正在读取检查点…") })
-          : checkpoints.error ? jsx("div", { style: S.empty, children: t("读取失败：") + esc(checkpoints.error) })
-          : !checkpoints.data.length ? jsx("div", { style: S.empty, children: t("暂无检查点（发送消息后自动生成）") })
+        checkpoints?.status && jsx("pre", { style: S.pre, children: checkpoints.status }),
+        checkpoints.loading && !checkpoints.data ? jsx("div", { style: S.empty, children: t("正在读取检查点…") })
+          : checkpoints.error && !checkpoints.data ? jsx("div", { style: S.empty, children: t("读取失败：") + esc(checkpoints.error) })
+          : !checkpoints.data || !checkpoints.data.length ? jsx("div", { style: S.empty, children: t("暂无检查点（发送消息后自动生成）") })
           : checkpoints.data.map((c) => jsx("div", { key: c.id, style: S.card, children: [
-              jsx("div", { style: S.row, children: [
-                jsx("span", { style: S.name, children: esc(c.type === "guard" ? "🛡 保护" : "● " + new Date(c.createdAt).toLocaleString()) }),
-                jsx("span", { style: S.sub, children: esc(c.root || c.cwd || "") }),
-                jsx("span", { style: { flex: 1 } }),
-                jsx("button", { style: S.btnSmall, disabled: busy, onClick: () => doPreview(c), children: t("预览") })
+              jsx("div", { style: { ...S.row, flexWrap: "nowrap", alignItems: "center" }, children: [
+                jsx("span", { style: { ...S.name, whiteSpace: "nowrap" }, children: esc(c.type === "guard" ? "🛡 保护" : "● " + new Date(c.createdAt).toLocaleString()) }),
+                jsx("span", { style: { ...S.sub, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: esc(c.root || c.cwd || "") }),
+                jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: busy, onClick: () => doPreview(c), children: t("预览") })
               ] }),
               c.summary && jsx("div", { style: S.desc, children: esc(c.summary) })
             ] })),
@@ -1082,12 +1226,11 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
           : preview.error
             ? jsx("pre", { style: S.pre, children: t("预览失败：") + esc(preview.error) })
             : jsx("div", { style: S.card, children: [
-                jsx("div", { style: S.row, children: [
-                  jsx("span", { style: S.name, children: t("回滚计划") }),
-                  jsx("span", { style: S.sub, children: `目标检查点：${esc(preview.data.checkpoint.id)} · 共 ${preview.data.total} 个文件变更` }),
-                  jsx("span", { style: { flex: 1 } }),
-                  jsx("button", { style: S.btnSmall, disabled: busy, onClick: () => setPreview(null), children: t("取消") }),
-                  jsx("button", { style: S.btnSmall, disabled: busy, onClick: doExecuteCheckpoint, children: t("确认回滚") })
+                jsx("div", { style: { ...S.row, flexWrap: "nowrap", alignItems: "center" }, children: [
+                  jsx("span", { style: { ...S.name, whiteSpace: "nowrap" }, children: t("回滚计划") }),
+                  jsx("span", { style: { ...S.sub, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: `目标检查点：${esc(preview.data.checkpoint.id)} · 共 ${preview.data.total} 个文件变更` }),
+                  jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: busy, onClick: () => setPreview(null), children: t("取消") }),
+                  jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: busy, onClick: doExecuteCheckpoint, children: t("确认回滚") })
                 ] }),
                 jsx("pre", { style: S.pre, children: (preview.data.diffs || []).slice(0, 200).map((d) =>
                   `${d.status === "added" ? "＋" : d.status === "deleted" ? "－" : "～"} ${d.path}${d.lineChanges ? ` (+${d.lineChanges.added}/-${d.lineChanges.removed})` : ""}`
@@ -1096,6 +1239,26 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
       ] });
     }
 
+    function formatTrashedAt(raw) {
+      // 归档目录名形如 2026-08-20T14-49-37-395Z（UTC ISO 的 : / . 被替换为 -）
+      if (!raw) return "";
+      try {
+        const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/.exec(raw);
+        if (m) {
+          const d = new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
+          if (!isNaN(d.getTime())) {
+            const p = (n) => String(n).padStart(2, "0");
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+          }
+        }
+        const d2 = new Date(raw);
+        if (!isNaN(d2.getTime())) {
+          const p = (n) => String(n).padStart(2, "0");
+          return `${d2.getFullYear()}-${p(d2.getMonth() + 1)}-${p(d2.getDate())} ${p(d2.getHours())}:${p(d2.getMinutes())}:${p(d2.getSeconds())}`;
+        }
+      } catch {}
+      return raw;
+    }
     function DeleteSection({ t }) {
       const [list, setList] = useState(null);
       const [busy, setBusy] = useState(false);
@@ -1172,6 +1335,12 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
         const iv = setInterval(() => load(false), 20000);
         return () => clearInterval(iv);
       }, []);
+      // 操作结果消息 8 秒后自动消失，避免残留
+      useEffect(() => {
+        if (!list?.status) return;
+        const t = setTimeout(() => setList((prev) => (prev ? { ...prev, status: undefined } : prev)), 8000);
+        return () => clearTimeout(t);
+      }, [list?.status]);
 
       return jsx("div", { style: S.wrap, children: [
         jsx("div", { style: S.rollbackHead, children: [
@@ -1197,15 +1366,14 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
           : list.data && list.error ? jsx("div", { style: S.empty, children: t("刷新失败（当前显示上次数据）：") + esc(list.error) })
           : !list.data.length ? jsx("div", { style: S.empty, children: t("没有已删除的会话") })
           : list.data.map((s) => jsx("div", { key: s.dir, style: S.card, children: [
-              jsx("div", { style: S.row, children: [
-                jsx("span", { style: S.name, children: esc(String(s.id).slice(0, 8) + "…") }),
-                jsx("span", { style: S.sub, children: esc(s.cwd) }),
-                jsx("span", { style: { flex: 1 } }),
-                jsx("button", { style: S.btnSmall, disabled: busy, onClick: () => doRestore(s.dir), children: busy ? t("恢复中…") : t("恢复") }),
-                jsx("button", { style: S.btnSmall, disabled: busy, onClick: () => doDelete(s.dir), children: busy ? t("删除中…") : t("彻底删除") })
+              jsx("div", { style: { ...S.row, flexWrap: "nowrap", alignItems: "center" }, children: [
+                jsx("span", { style: { ...S.name, whiteSpace: "nowrap" }, children: esc(String(s.id).slice(0, 8) + "…") }),
+                jsx("span", { style: { ...S.sub, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: esc(s.cwd) }),
+                jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: busy, onClick: () => doRestore(s.dir), children: busy ? t("恢复中…") : t("恢复") }),
+                jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: busy, onClick: () => doDelete(s.dir), children: busy ? t("删除中…") : t("彻底删除") })
               ] }),
               s.lastUserText ? jsx("div", { style: S.desc, children: esc(s.lastUserText) }) : null,
-              jsx("div", { style: S.status, children: (s.time ? "最后消息：" + esc(s.time) + " · " : "") + t("归档时间：") + esc(s.trashedAt || "") })
+              jsx("div", { style: S.status, children: (s.time ? "最后消息：" + esc(s.time) + " · " : "") + t("归档时间：") + esc(formatTrashedAt(s.trashedAt || "")) })
             ] }))
       ] });
     }
@@ -1215,13 +1383,27 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
       return jsx("div", { style: S.wrap, children: [
         jsx("div", { style: S.nav, children: [
           jsx("button", { style: S.navBtn(tab === "rollback"), onClick: () => setTab("rollback"), children: t("回滚") }),
+          jsx("button", { style: S.navBtn(tab === "checkpoint"), onClick: () => setTab("checkpoint"), children: t("检查点") }),
           jsx("button", { style: S.navBtn(tab === "trash"), onClick: () => setTab("trash"), children: t("回收站") })
         ] }),
-        tab === "rollback" ? jsx(RollbackSection, { t }) : jsx(DeleteSection, { t })
+        tab === "rollback" ? jsx(RollbackSection, { t }) : tab === "checkpoint" ? jsx(CheckpointSection, { t }) : jsx(DeleteSection, { t })
       ] });
     }
 
     const CHANGELOG = [
+      {
+        version: "0.1.3.1",
+        date: "2026-08-21",
+        items: [
+          "新增：插件禁用名单——插件市场可禁用插件（安装按钮变「恢复」，避免误装），「禁用」页统一管理；卸载的默认插件不再强制装回（自由卸载）",
+          "优化：归档管理拆分「检查点」独立页（回滚 | 检查点 | 回收站），列表与按钮布局不再换行错位",
+          "修复：安装/卸载插件时弹出终端框——pnpm 子进程窗口隐藏",
+          "修复：回收站/回滚/检查点操作结果消息永久残留——8 秒后自动消失",
+          "修复：归档时间显示为 UTC 原始格式——改为本地时间显示",
+          "优化：启动自动清理的空会话直接删除，不再移入回收站堆积垃圾记录",
+          "修复：检查点列表无感刷新——刷新不闪屏、操作结果消息不再丢失"
+        ]
+      },
       {
         version: "0.1.3",
         date: "2026-08-20",
