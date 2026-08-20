@@ -1,7 +1,7 @@
 // DeepSeek Harness 桌面版主进程
 // 职责：启动内置的 dsh web 服务，在原生窗口里打开 Web 界面，
 // 并提供桌面端扩展：MCP 检测、插件安装（内置 pnpm）、更新检查。
-const { app, BrowserWindow, Menu, shell, ipcMain, clipboard } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, clipboard, screen } = require('electron');
 const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -15,6 +15,7 @@ const { createCheckpointEngine } = require('./plugins/dsh-desktop-settings/lib/c
 const APP_NAME = 'DeepSeek Harness';
 app.setName(APP_NAME);
 let win = null;
+let tray = null;
 let mcpWin = null;
 let pluginWin = null;
 let settingsWin = null;
@@ -25,6 +26,7 @@ let quitting = false;
 let startupTimeout = null;
 let reloadPromise = null;
 let reloadingHarness = false;
+let lastReconnectAt = 0;    // 主页面加载失败自动重连的防抖时间戳
 
 // 方案A：harness 驻留（延迟杀）。应用退出后保留 dsh web 子进程一段时间，
 // 期间重新启动直接复用已就绪的服务端口，实现热启动秒开。
@@ -383,7 +385,7 @@ function startHarness() {
       const compileCacheDir = path.join(dshHome(), 'cache', 'node-compile');
       try { fs.mkdirSync(compileCacheDir, { recursive: true }); } catch {}
       const harnessEnv = Object.assign({}, process.env, { NODE_COMPILE_CACHE: compileCacheDir });
-      child = spawn(nodeExe(), [harnessBin(), '--profile', 'web', '--host', '127.0.0.1', '--port', '0'], {
+      child = spawn(nodeExe(), [harnessBin(), '--profile', 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], {
         cwd: wsDir,
         env: harnessEnv,
         windowsHide: true,
@@ -792,12 +794,45 @@ const DEFAULT_PROFILE_PLUGINS = {
   'dsh-token-usage': 'git+https://github.com/LeemanCheung/dsh-token-usage.git',
 };
 async function ensureDefaultPlugins() {
+  // 离线预装：安装包分发时附带 resources/preloaded-plugins（do-pack 打包时从
+  // profile 抓取的已装插件+依赖平铺副本）。存在该目录则直接复制，不再在线 pnpm。
+  const preloaded = path.join(resourcesRoot(), 'preloaded-plugins');
+  if (fs.existsSync(preloaded)) {
+    let copied = 0;
+    const fails = [];
+    for (const name of Object.keys(DEFAULT_PROFILE_PLUGINS)) {
+      const rel = name.split('/');
+      const src = path.join(preloaded, ...rel);
+      if (!fs.existsSync(src)) continue;
+      const dest = path.join(profileDir(), 'node_modules', ...rel);
+      if (fs.existsSync(dest)) continue;
+      try {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.cpSync(src, dest, { recursive: true, force: true });
+        copied++;
+      } catch (e) {
+        fails.push(`${name}: ${String(e && e.message || e)}`);
+      }
+    }
+    if (copied) appendLog(`[desktop] 已离线预装默认插件 ${copied} 个（免联网）\n`);
+    for (const f of fails) appendLog(`[desktop] 离线预装插件失败 ${f}\n`);
+    if (copied || fails.length) { try { await verifyPluginAfterInstall(); } catch {} }
+    return;
+  }
   const manifest = readJsonSafe(path.join(profileDir(), 'package.json')) || {};
   const deps = manifest.dependencies || {};
+  // 失败标记：安装失败的默认插件只尝试一次，后续启动跳过（避免每次启动都重跑
+  // pnpm 安装与 harness 冷启动抢 CPU，导致加载环境时窗口长时间无响应/未响应）
+  const FAILED_MARKER = path.join(profileDir(), '.default-plugins-failed.json');
+  let failed = {};
+  try { failed = readJsonSafe(FAILED_MARKER) || {}; } catch {}
+  const saveFailed = () => {
+    try { fs.writeFileSync(FAILED_MARKER, JSON.stringify(failed, null, 2), 'utf8'); } catch {}
+  };
   const todo = [];
   for (const [name, spec] of Object.entries(DEFAULT_PROFILE_PLUGINS)) {
     const installed = fs.existsSync(path.join(profileDir(), 'node_modules', name));
-    if (!installed && !deps[name]) todo.push([name, spec]);
+    if (!installed && !deps[name] && !failed[name]) todo.push([name, spec]);
   }
   if (!todo.length) return;
   appendLog(`[desktop] 首次启动：自动安装内置默认插件 ${todo.length} 个…\n`);
@@ -806,8 +841,11 @@ async function ensureDefaultPlugins() {
       const r = await runPluginChild('add', spec, await pnpmEnv(), 300000, []);
       const tail = String(r.log || '').split('\n').filter(Boolean).pop() || r.ok ? 'ok' : 'failed';
       appendLog(`[desktop] 默认插件 ${name}：${r.ok ? '安装成功' : '安装失败 ' + tail}\n`);
+      if (!r.ok) { failed[name] = Date.now(); saveFailed(); }
     } catch (e) {
       appendLog(`[desktop] 默认插件 ${name} 安装异常：${String(e && e.message || e)}\n`);
+      failed[name] = Date.now();
+      saveFailed();
     }
   }
   try { await verifyPluginAfterInstall(); } catch {}
@@ -867,21 +905,71 @@ async function ensureDesktopPlugin() {
 }
 
 function createWindow(options = {}) {
+  const isWin = process.platform === 'win32';
   win = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1080, minHeight: 700,
-    backgroundColor: '#f9fafb', title: APP_NAME, icon: iconPath(),
-    autoHideMenuBar: false, show: false,
+    // 深色玻璃无边框（系统按钮方案）：titleBarStyle:hidden 隐藏标题栏文字、内容上浮，
+    // titleBarOverlay 提供 Win11 系统最小化/最大化/关闭按钮（Electron 43 的 frame:false 失效的可靠替代）
+    backgroundColor: '#16181d',
+    title: APP_NAME, icon: iconPath(),
+    autoHideMenuBar: true, show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false
+      contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false,
+      backgroundThrottling: false
     }
   });
 
   win.loadFile(path.join(__dirname, 'app', 'loading.html'), { query: { first: options.firstRun ? '1' : '0' } });
   win.once('ready-to-show', () => win.show());
+  // Win11 深色玻璃（Mica）：运行时设置，titleBarStyle:hidden 下也生效
+  if (isWin && win.setBackgroundMaterial) {
+    try { win.setBackgroundMaterial('mica'); } catch {}
+  }
+  win.on('close', (event) => {
+    // 关闭默认隐藏到系统托盘（仅真正退出时销毁窗口）
+    if (!quitting && !pluginJobCount) {
+      event.preventDefault();
+      if (win && !win.isDestroyed()) { win.hide(); }
+      if (tray) tray.displayBalloon({ title: APP_NAME, content: '已最小化到系统托盘，继续在后台运行。', icon: balloonIcon(), iconType: 'none' });
+    }
+  });
   win.on('closed', () => { win = null; });
+  win.on('maximize', () => { if (win && !win.isDestroyed()) win.webContents.send('dsh:win-maximized-change', true); });
+  win.on('unmaximize', () => { if (win && !win.isDestroyed()) win.webContents.send('dsh:win-maximized-change', false); });
 
   const wc = win.webContents;
+  // 诊断：捕获渲染进程无响应/崩溃/加载失败（"灰色禁用/无法点击"现象的根因排查）
+  wc.on('unresponsive', () => appendLog('[desktop] webContents unresponsive!\n'));
+  wc.on('responsive', () => appendLog('[desktop] webContents responsive again\n'));
+  wc.on('render-process-gone', (e, details) => appendLog(`[desktop] render-process-gone: reason=${details.reason} exitCode=${details.exitCode}\n`));
+  wc.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
+    appendLog(`[desktop] did-fail-load: code=${code} desc=${desc} url=${url}\n`);
+    // harness 崩溃/重启会换端口：窗口若停留在旧 URL，页面挂起表现为灰屏“未响应”。
+    // 主 frame 加载失败时自动重新 connect（复用/重启 harness 并加载最新 URL），防抖 10s。
+    if (!isMainFrame) return;
+    const aborted = code === -3 || code === -21 || code === -6 || code === -7;
+    if (!aborted) return;
+    const now = Date.now();
+    if (now - lastReconnectAt < 10000) return;
+    lastReconnectAt = now;
+    appendLog('[desktop] 主页面加载失败，自动重新连接 harness…\n');
+    connect();
+  });
+  // 加载超时保护：loading 阶段长时间未就绪时强制刷新一次（避免灰屏卡死）
+  const loadingWatch = setInterval(() => {
+    try {
+      if (!win || win.isDestroyed()) { clearInterval(loadingWatch); return; }
+      const cur = win.webContents.getURL();
+      if (cur.includes('loading.html') || cur === '' || cur === 'about:blank') {
+        appendLog(`[desktop] loading watch: still loading after 90s, url=${cur}\n`);
+        clearInterval(loadingWatch);
+        try { win.reload(); } catch {}
+      } else {
+        clearInterval(loadingWatch);
+      }
+    } catch { clearInterval(loadingWatch); }
+  }, 90000);
   // F11 全屏只切换窗口全屏，不隐藏 Web 界面任何元素。
   // （此前版本会隐藏会话 header，导致“对话/轨迹”切换、子代理选择、
   //   Token 轨迹分析、Session log 等操作入口在全屏下不可用。）
@@ -905,6 +993,57 @@ function createWindow(options = {}) {
       win.setFullScreen(false);
     }
   });
+}
+
+// ---------- 系统托盘：关闭窗口默认隐藏到托盘 ----------
+function balloonIcon() {
+  // 气泡通知图标：优先 32x32 二值化 PNG（清晰），回退 icon.ico
+  const hi = nativeImage.createFromPath(path.join(__dirname, 'build', 'tray@2x.png'));
+  if (!hi.isEmpty()) return hi;
+  return nativeImage.createFromPath(iconPath());
+}
+function createTray() {
+  try {
+    // 优先使用 build/tray.png（16x16 + tray@2x.png 32x32，alpha 已二值化，
+    // 无半透明像素，避免 HICON 转换产生黑色边缘）；不做 resize，
+    // 由 Electron 按 DPI 自动选择 @2x 表示，系统负责最终缩放。
+    let img = nativeImage.createFromPath(path.join(__dirname, 'build', 'tray.png'));
+    if (!img.isEmpty()) {
+      appendLog(`[desktop] tray: using tray.png size=${img.getSize().width}x${img.getSize().height}\n`);
+    } else {
+      img = nativeImage.createFromPath(iconPath());
+      if (!img.isEmpty()) {
+        const sf = (screen.getPrimaryDisplay() || {}).scaleFactor || 1;
+        const target = Math.max(16, Math.round(16 * sf));
+        const s = img.getSize();
+        if (s.width !== target || s.height !== target) {
+          img = img.resize({ width: target, height: target, quality: 'best' });
+        }
+        appendLog(`[desktop] tray: ico fallback scale=${sf} target=${target} size=${img.getSize().width}x${img.getSize().height}\n`);
+      }
+    }
+    tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
+    tray.setToolTip(APP_NAME);
+    const showMain = () => {
+      if (win && !win.isDestroyed()) {
+        win.show();
+        win.focus();
+      } else {
+        createWindow();
+        connect();
+      }
+    };
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: '打开 ' + APP_NAME, click: showMain },
+      { type: 'separator' },
+      { label: '退出', click: () => { quitting = true; app.quit(); } }
+    ]));
+    tray.on('click', showMain);
+    tray.on('double-click', showMain);
+  } catch (err) {
+    appendLog(`[desktop] tray 初始化失败：${err}\n`);
+    tray = null;
+  }
 }
 
 // ---------- 桌面扩展：MCP 检测 ----------
@@ -1698,6 +1837,23 @@ function compareSemver(a, b) {
 let updateCache = null;
 // 发布仓库：GitHub Releases 存放安装包（LTJ002/DeepSeek-Harness）
 const UPDATE_REPO = 'LTJ002/DeepSeek-Harness';
+// 双源更新：GitHub 主源 + Gitee 备用源（Gitee 仓库创建后填入地址即可生效）
+const UPDATE_SOURCES = [
+  {
+    name: 'github',
+    label: 'GitHub',
+    api: 'https://api.github.com/repos/' + UPDATE_REPO + '/releases/latest',
+    repo: 'https://github.com/' + UPDATE_REPO
+  },
+  {
+    name: 'gitee',
+    label: 'Gitee',
+    api: 'https://gitee.com/api/v5/repos/LTJ002/DeepSeek-Harness/releases/latest',
+    repo: 'https://gitee.com/LTJ002/DeepSeek-Harness',
+    // Gitee API 需要权限token；未配置 token 时走匿名（仅公开仓库可读）。留空则自动尝试。
+    token: ''
+  }
+];
 // 本地打包版本号（随打包版本变化；若与 harness 内置一致则读顶层）
 function localAppVersion() {
   try {
@@ -1706,68 +1862,197 @@ function localAppVersion() {
   } catch { return bundledVersion(); }
 }
 // 下载 release 资产（安装包）到 ~/.dsh/update/
-function downloadUpdateAsset(url, targetDir) {
-  return new Promise((resolve) => {
+// 分片下载：HTTP Range 分段下载，失败自动重试该分片；支持多源回退（urls 数组按优先级）。
+const DOWNLOAD_CHUNK_SIZE = 8 * 1024 * 1024; // 8MB/片
+const DOWNLOAD_CHUNK_RETRY = 3;
+const DOWNLOAD_HEAD_RETRY = 2;
+
+function httpGetStream(url, headers, redirects = 3) {
+  return new Promise((resolve, reject) => {
     let u;
-    try { u = new URL(url); } catch { return resolve({ ok: false, msg: '无效的下载地址' }); }
+    try { u = new URL(url); } catch (e) { return reject(e); }
+    const req = https.get(u, { headers, timeout: 30000 }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
+        res.resume();
+        return resolve(httpGetStream(new URL(res.headers.location, u).toString(), headers, redirects - 1));
+      }
+      resolve(res);
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+  });
+}
+
+function probeDownload(urls) {
+  // 返回 { fileUrl, size, acceptRanges }；head 失败退化为 GET 探测
+  const probe = (url) => httpGetStream(url, { 'user-agent': 'dsh-desktop', Range: 'bytes=0-0' })
+    .then((res) => {
+      const size = parseSizeFromContentRange(res.headers['content-range'], res.headers['content-length']);
+      const acceptRanges = /bytes/i.test(String(res.headers['accept-ranges'] || ''));
+      res.resume();
+      return { fileUrl: url, size, acceptRanges };
+    });
+  const loop = (i) => {
+    if (i >= urls.length) return null;
+    return probe(urls[i]).catch(() => (i + 1 < urls.length ? loop(i + 1) : null));
+  };
+  return loop(0);
+}
+
+function parseSizeFromContentRange(cr, cl) {
+  if (cr) { const m = /bytes\s+\d+-\d+\/(\d+)/.exec(cr); if (m && m[1] && m[1] !== '*') return Number(m[1]); }
+  if (cl) { const n = Number(cl); if (isFinite(n)) return n; }
+  return 0;
+}
+
+function downloadRange(url, start, end, filePath, fd) {
+  return new Promise((resolve) => {
+    httpGetStream(url, { 'user-agent': 'dsh-desktop', Range: `bytes=${start}-${end - 1}` }).then((res) => {
+      if (res.statusCode !== 206 && res.statusCode !== 200) { res.resume(); return resolve({ ok: false, msg: 'HTTP ' + res.statusCode }); }
+      let written = 0;
+      res.on('data', (chunk) => {
+        try { fs.writeSync(fd, chunk, 0, chunk.length, start + written); written += chunk.length; } catch (e) { res.destroy(e); }
+      });
+      res.on('end', () => resolve({ ok: true, written }));
+      res.on('error', (e) => resolve({ ok: false, msg: String(e && e.message || e) }));
+    }).catch((e) => resolve({ ok: false, msg: String(e && e.message || e) }));
+  });
+}
+
+function downloadUpdateAsset(urlOrList, targetDir) {
+  return new Promise((resolve) => {
+    const urls = Array.isArray(urlOrList) ? urlOrList.filter(Boolean) : [urlOrList];
+    if (urls.length === 0) return resolve({ ok: false, msg: '无效的下载地址' });
+    let u;
+    try { u = new URL(urls[0]); } catch { return resolve({ ok: false, msg: '无效的下载地址' }); }
     fs.mkdirSync(targetDir, { recursive: true });
     const fileName = u.pathname.split('/').pop() || 'setup.exe';
     const filePath = path.join(targetDir, fileName);
-    const req = https.get(u, { headers: { 'user-agent': 'dsh-desktop' }, timeout: 30000 }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        return resolve(downloadUpdateAsset(new URL(res.headers.location, u).toString(), targetDir));
+    const tmpPath = filePath + '.part';
+
+    probeDownload(urls).then((probe) => {
+      if (!probe) return resolve({ ok: false, msg: '所有源连接失败' });
+      const { fileUrl, size, acceptRanges } = probe;
+      if (!acceptRanges || !size || size <= 0) {
+        // 不支持断点续传：退化为单流下载（仍多源回退）
+        return singleStreamDownload(urls, filePath, resolve);
       }
-      if (res.statusCode !== 200) { res.resume(); return resolve({ ok: false, msg: 'HTTP ' + res.statusCode }); }
+      // 分片下载
+      const fd = fs.openSync(tmpPath, 'w');
+      const chunks = [];
+      for (let s = 0; s < size; s += DOWNLOAD_CHUNK_SIZE) {
+        chunks.push({ start: s, end: Math.min(s + DOWNLOAD_CHUNK_SIZE, size) });
+      }
+      const total = chunks.length;
+      let done = 0, failed = false, fallback = false;
+      const runChunk = (chunk, attempt) => {
+        if (failed) return;
+        downloadRange(fileUrl, chunk.start, chunk.end, filePath, fd).then((r) => {
+          if (!r.ok) {
+            if (attempt < DOWNLOAD_CHUNK_RETRY) return runChunk(chunk, attempt + 1);
+            failed = true;
+            try { fs.closeSync(fd); } catch {}
+            return resolve({ ok: false, msg: '分片下载失败：' + r.msg });
+          }
+          done++;
+          if (done === total) {
+            try { fs.closeSync(fd); } catch {}
+            fs.renameSync(tmpPath, filePath);
+            resolve({ ok: true, filePath, size });
+          }
+        });
+      };
+      // 并发分片（控制并发 4）
+      let next = 0;
+      const worker = () => {
+        if (failed) return;
+        if (next >= chunks.length) return;
+        const idx = next++;
+        runChunk(chunks[idx], 1);
+        worker();
+      };
+      for (let i = 0; i < Math.min(4, chunks.length); i++) worker();
+    });
+  });
+}
+
+function singleStreamDownload(urls, filePath, resolve) {
+  const attempt = (i) => {
+    if (i >= urls.length) return resolve({ ok: false, msg: '所有源下载失败' });
+    httpGetStream(urls[i], { 'user-agent': 'dsh-desktop' }).then((res) => {
+      if (res.statusCode !== 200) { res.resume(); return attempt(i + 1); }
       const out = fs.createWriteStream(filePath);
       res.pipe(out);
       out.on('finish', () => resolve({ ok: true, filePath }));
-      out.on('error', (e) => resolve({ ok: false, msg: String(e && e.message || e) }));
-    });
-    req.on('timeout', () => { req.destroy(new Error('timeout')); resolve({ ok: false, msg: '下载超时' }); });
-    req.on('error', (e) => resolve({ ok: false, msg: String(e && e.message || e) }));
-  });
+      out.on('error', (e) => { out.destroy(); attempt(i + 1); });
+    }).catch(() => attempt(i + 1));
+  };
+  attempt(0);
 }
+function parseReleaseFromSource(name, body) {
+  // GitHub: {tag_name, assets:[{name,browser_download_url}], html_url}
+  // Gitee:  {tag_name, assets:[{name,browser_download_url}], html_url}（单对象）或数组
+  try {
+    let rel = JSON.parse(body);
+    if (Array.isArray(rel)) rel = rel[0] || {};
+    const tag = rel.tag_name || '';
+    const latest = tag.replace(/^v/i, '') || '未知';
+    const asset = (rel.assets || []).find((a) => /.exe$/i.test(a.name || '')) || (rel.assets || [])[0];
+    const downloadUrl = asset ? (asset.browser_download_url || asset.download_url || null) : null;
+    return { tag, latest, downloadUrl, releaseUrl: rel.html_url || null };
+  } catch { return null; }
+}
+
 function checkUpdate(force = false) {
   const now = Date.now();
   if (!force && updateCache && now - updateCache.at < 5 * 60 * 1000) return Promise.resolve(updateCache.value);
   const current = localAppVersion();
   const kernel = bundledVersion();
   return new Promise((resolve) => {
-    fetchText('https://api.github.com/repos/' + UPDATE_REPO + '/releases/latest')
-      .then((body) => {
-        const rel = JSON.parse(body);
-        const tag = rel.tag_name || '';
-        const latest = tag.replace(/^v/i, '') || '未知';
-        const asset = (rel.assets || []).find((a) => /.exe$/i.test(a.name)) || rel.assets[0];
-        const downloadUrl = asset ? (asset.browser_download_url || null) : null;
-        const newer = latest !== '未知' && compareSemver(latest, current) > 0;
-        const value = { current, kernel, latest, newer, downloadUrl, tagName: tag, releaseUrl: rel.html_url || null };
-        updateCache = { at: Date.now(), value };
-        resolve(value);
-      })
-      .catch((e) => {
-        const msg = String(e && e.message || e);
-        // 404 = 发布仓库还没有 release（尚未发布安装包），属正常状态而非错误
-        const notPublished = /HTTP 404/.test(msg);
-        const value = {
-          current, kernel, latest: null, newer: false,
-          notPublished: notPublished || undefined,
-          error: notPublished ? undefined : msg
-        };
-        updateCache = { at: Date.now(), value };
-        resolve(value);
-      });
+    // 依次尝试各源，收集每个源的结果；至少一个源成功即可
+    let settled = false;
+    const sources = [];
+    let best = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      const value = {
+        current, kernel,
+        sources,
+        latest: best ? best.latest : (sources[0] && sources[0].latest) || null,
+        newer: !!(best && best.latest !== '未知' && compareSemver(best.latest, current) > 0),
+        downloadUrl: best ? best.downloadUrl : (sources[0] && sources[0].downloadUrl) || null,
+        tagName: best ? best.tag : null,
+        releaseUrl: best ? best.releaseUrl : null
+      };
+      updateCache = { at: Date.now(), value };
+      resolve(value);
+    };
+    let pending = UPDATE_SOURCES.length;
+    if (pending === 0) return finish();
+    for (const src of UPDATE_SOURCES) {
+      const headers = { 'user-agent': 'dsh-desktop' };
+      let url = src.api;
+      if (src.token) url += (url.includes('?') ? '&' : '?') + 'access_token=' + encodeURIComponent(src.token);
+      fetchText(url, 3, headers).then((body) => {
+        const parsed = parseReleaseFromSource(src.name, body);
+        if (parsed) {
+          const item = { name: src.name, label: src.label, ...parsed };
+          sources.push(item);
+          if (!best || (item.latest !== '未知' && compareSemver(item.latest, best.latest) > 0)) best = item;
+        }
+      }).catch(() => {}).finally(() => { if (--pending === 0) finish(); });
+    }
   });
 }
 
 // ---------- 桌面扩展：插件市场（awesome-dsh-plugin） ----------
-function fetchText(url, redirects = 3) {
+function fetchText(url, redirects = 3, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(url); } catch (e) { return reject(e); }
     if (u.protocol !== 'https:') return reject(new Error('only https'));
-    const req = https.get(u, { headers: { 'user-agent': 'dsh-desktop' }, timeout: 15000 }, (res) => {
+    const req = https.get(u, { headers: Object.assign({ 'user-agent': 'dsh-desktop' }, extraHeaders), timeout: 15000 }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
         res.resume();
         let next;
@@ -1776,7 +2061,7 @@ function fetchText(url, redirects = 3) {
         } catch (e) {
           return reject(new Error(`invalid redirect location: ${e && e.message || e}`));
         }
-        return resolve(fetchText(next, redirects - 1));
+        return resolve(fetchText(next, redirects - 1, extraHeaders));
       }
       if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
       let body = '';
@@ -3010,6 +3295,14 @@ ipcMain.on('dsh:restart', () => {
   }
 });
 ipcMain.on('dsh:quit', () => app.quit());
+// ---------- 自绘标题栏窗口控制 ----------
+ipcMain.on('dsh:win-minimize', () => { if (win && !win.isDestroyed()) win.minimize(); });
+ipcMain.on('dsh:win-maximize', () => {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMaximized()) win.unmaximize(); else win.maximize();
+});
+ipcMain.on('dsh:win-close', () => { if (win && !win.isDestroyed()) win.close(); });
+ipcMain.handle('dsh:win-is-maximized', () => (win && !win.isDestroyed()) ? win.isMaximized() : false);
 ipcMain.handle('dsh:reload-harness', () => reloadHarness());
 ipcMain.handle('dsh:reload-harness-soft', (_e, msg) => reloadHarness({ soft: true, msg: typeof msg === 'string' && msg ? msg : '正在应用更改…' }));
 ipcMain.handle('dsh:get-log-path', () => logFile());
@@ -3023,9 +3316,10 @@ ipcMain.handle('dsh:check-update', () => checkUpdate());
 // 下载并启动安装更新：下载 release 安装包到临时目录，然后启动安装器（覆盖安装，弹 UAC）
 ipcMain.handle('dsh:update-download', async (_e, downloadUrl) => {
   try {
-    if (typeof downloadUrl !== 'string' || !/^https?:\/\//.test(downloadUrl)) return { ok: false, msg: '无效的下载地址' };
+    const urls = Array.isArray(downloadUrl) ? downloadUrl.filter((x) => typeof x === 'string' && /^https?:\/\//.test(x)) : (typeof downloadUrl === 'string' && /^https?:\/\//.test(downloadUrl) ? [downloadUrl] : []);
+    if (urls.length === 0) return { ok: false, msg: '无效的下载地址' };
     const targetDir = path.join(dshHome(), 'update');
-    const result = await downloadUpdateAsset(downloadUrl, targetDir);
+    const result = await downloadUpdateAsset(urls, targetDir);
     if (!result.ok) return { ok: false, msg: result.msg || '下载失败' };
     appendLog('[desktop] 更新安装包已下载：' + result.filePath + '\n');
     // 启动安装器（覆盖安装）。用 spawn 启动，不阻塞主进程；安装器本身是 admin 权限，会弹 UAC
@@ -3274,6 +3568,7 @@ if (!gotLock) {
     // 是否真·首次：桌面设置插件还没放进 profile 时才算首次。
     const firstRun = !fs.existsSync(path.join(profileDir(), 'node_modules', 'dsh-desktop-settings', 'package.json'));
     createWindow({ firstRun });
+    createTray();
     dshStartupTime = Date.now(); // 记录启动时间，供空会话清理判断
     // 插件定期更新检查：启动 15 秒后后台检查一次，之后每 24 小时自动检查（仅提示，不自动安装）
     setTimeout(() => { checkPluginUpdates().then((d) => { pluginUpdateCache = { at: Date.now(), value: d }; appendLog('[desktop] 插件更新检查完成：' + d.updates.length + ' 个可更新，共 ' + d.total + ' 个\n'); }).catch((e) => appendLog('[desktop] 插件更新检查失败：' + (e && e.message || e) + '\n')); }, 15000);
@@ -3282,7 +3577,9 @@ if (!gotLock) {
     // 后台预热会话列表缓存：设置页“对话回滚/删除对话”打开时直接可用，避免同步扫描卡住主进程
     const existingWebPromise = findExistingDshWeb();
     try { await ensureDesktopPlugin(); } catch (err) { appendLog(`[desktop] ensure plugin: ${err}\n`); }
-    ensureDefaultPlugins().catch((err) => appendLog(`[desktop] ensure default plugins: ${err && err.message || err}\n`));
+    // 默认插件安装延迟到 harness 就绪后（20s）再执行：避免与 harness 冷启动并行跑
+    // pnpm 安装抢 CPU，导致加载环境时窗口长时间无响应/未响应
+    setTimeout(() => { ensureDefaultPlugins().catch((err) => appendLog(`[desktop] ensure default plugins: ${err && err.message || err}\n`)); }, 20000);
     // 后台执行：类似 Claude Code 从 ~/.claude.json 检测 MCP 并同步（等待 harness 就绪后再改 patch + 热重载）
     setTimeout(() => { ensureMcpAutoSync().catch((err) => appendLog(`[desktop] MCP 检测: ${err && err.message || err}\n`)); }, 8000);
     // 优先复用本机已有的 dsh web 服务（避免两个服务并发写同一份会话日志）；

@@ -427,7 +427,10 @@ window.__ModuleLoader__.load({
           if (!Array.isArray(jobs)) return;
           const now = Date.now();
           for (const job of jobs) {
-            currentJobs.set(job.id, { ...job, updatedAt: now });
+            // 仅运行中任务刷新 updatedAt；已完成/失败任务保留首次看到其终态的时间，
+            // 否则每次轮询都重置 30 秒自动收起计时，面板会一直显示不消失
+            const prevJob = currentJobs.get(job.id);
+            currentJobs.set(job.id, { ...job, updatedAt: prevJob && job.status !== "running" ? prevJob.updatedAt : now });
             const prev = seen.get(job.id);
             if (prev === "running" && (job.status === "done" || job.status === "error")) showToast(job);
             else if (!prev && (job.status === "done" || job.status === "error") && job.startedAt && job.startedAt > PAGE_LOAD_TIME - 300000) {
@@ -536,7 +539,7 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
           try {
             const job = window.__dshLastJob;
             if (!job || !job.log) return;
-            if (Date.now() - (job.startedAt || 0) > 300000) return;
+            if (Date.now() - (job.startedAt || 0) > 60000) return;
             setInstallLog(`${job.mode === "add" ? "插件安装" : "插件卸载"} ${job.pkg}（${job.status === "done" ? "完成" : "失败"}）\n${job.log}`);
           } catch {}
         };
@@ -743,7 +746,10 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
             jsx("input", { style: { ...S.input, flex: 1 }, value: pkg, placeholder: "npm 包名 / github:owner/repo / tar.gz 链接 / dsh plugin add <包名>", onChange: (e) => setPkg(e.target.value) }),
             jsx("button", { style: S.btn, disabled: pluginBusy, onClick: installPkg, children: pluginBusy ? t("任务进行中…") : t("安装") })
           ] }),
-          installLog && jsx("pre", { style: S.pre, children: installLog }),
+          installLog && jsx("div", { children: [
+          jsx("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: 6 }, children: jsx("button", { style: { ...S.btnSmall, color: "#888" }, onClick: () => setInstallLog(""), children: t("清除日志") }) }),
+          jsx("pre", { style: S.pre, children: installLog })
+        ] }),
           lastFailed && !aiBusy && jsx("div", { style: S.card, children: [
             jsx("div", { style: S.row, children: [
               jsx("span", { style: { fontSize: 13 }, children: `常规安装失败：${esc(lastFailed.pkg)}，可让 AI 自动诊断修复` }),
@@ -851,7 +857,10 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
               jsx("button", { style: S.btnSmall, disabled: pluginBusy, onClick: () => uninstallPkg(b), children: uninstallingPkg === b ? "卸载中…" : t("卸载") })
             ] })
           ] })) : jsx("div", { style: S.empty, children: t("无") }),
-          installLog && jsx("pre", { style: S.pre, children: installLog }),
+          installLog && jsx("div", { children: [
+          jsx("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: 6 }, children: jsx("button", { style: { ...S.btnSmall, color: "#888" }, onClick: () => setInstallLog(""), children: t("清除日志") }) }),
+          jsx("pre", { style: S.pre, children: installLog })
+        ] }),
           lastFailed && !aiBusy && jsx("div", { style: S.card, children: [
             jsx("div", { style: S.row, children: [
               jsx("span", { style: { fontSize: 13 }, children: `常规安装失败：${esc(lastFailed.pkg)}，可让 AI 自动诊断修复` }),
@@ -1213,6 +1222,22 @@ const [uninstallingPkg, setUninstallingPkg] = useState(null);
     }
 
     const CHANGELOG = [
+      {
+        version: "0.1.3",
+        date: "2026-08-20",
+        items: [
+          "内核升级 0.1.0-rc.8：增强多模态支持（DeepSeek 原生图片请求、/goal、/plan 图文输入、@ 菜单引用文件和会话）；Claude Code 与 Codex 子代理可按需安装为 Profile Bundle（Codex 支持非交互权限模式与多命名实例）；Windows PTY 支持持久 PowerShell 会话；修复图片载荷过大导致模型请求失败、取消流式生成后回复前缀丢失、OpenAI 兼容网关调用失败；优化 web_search 并发、子代理报告及时唤醒、SQLite 读写与分叉性能（存储格式不兼容）",
+          "修复：系统托盘图标四角黑边——新增二值化透明通道托盘图标（16x16/32x32 @2x），去除半透明像素避免 HICON 转换黑化，托盘创建不再二次缩放，按 DPI 自动选高分辨率表示",
+          "修复：最小化通知气泡图标模糊——改用 32x32 高清图标",
+          "修复：dsh-desktop-settings 升级后 client bundle 缺失导致启动失败，恢复 client.js 并补齐会话记录时间戳（updatedAt/prevJob）自动收起逻辑",
+          "修复：skill-filesystem 内核升级后 chokidar 依赖缺失，补装 chokidar@5.0.0",
+          "修复：内核升级后偶发「Failed to load plugins / bundle script failed to load」（升级期历史故障，已验证全部 client bundle 加载正常）",
+          "修复：窗口加载环境时最大化后灰色未响应/假死——内核重启换端口后窗口停留在旧地址，主进程自动重连（10 秒防抖），无需手动重启",
+          "修复：安装失败的默认插件每次启动重复安装拖慢启动——失败后记录标记不再重试，安装任务延迟到启动完成之后执行",
+          "优化：插件安装日志自动收起窗口由 5 分钟缩短至 60 秒，「链接/命令安装」与「已安装」页日志新增「清除日志」按钮",
+          "优化：默认插件改为离线预打包（preloaded-plugins），全新环境安装免联网、大幅缩短首次启动时间"
+        ]
+      },
       {
         version: "0.1.2",
         date: "2026-08-19",

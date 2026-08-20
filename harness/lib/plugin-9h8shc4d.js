@@ -107,12 +107,9 @@ function runPlugin(profile, args) {
 	const before = readProfileManifest(NAME, dir);
 	const result = spawnSync("pnpm", args.map((argument) => anchorPathSpec(argument, process.cwd())), {
 		cwd: dir,
-		stdio: ["ignore", "pipe", "pipe"],
-		shell: process.platform === "win32",
-		windowsHide: true
+		stdio: "inherit",
+		shell: process.platform === "win32"
 	});
-	if (result.stdout) process.stdout.write(result.stdout);
-	if (result.stderr) process.stderr.write(result.stderr);
 	if (result.error !== void 0) {
 		if (result.error.code === "ENOENT") {
 			process.stderr.write(`${NAME}: pnpm not found on PATH — install pnpm to manage profile plugins\n`);

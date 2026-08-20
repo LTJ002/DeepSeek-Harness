@@ -12,7 +12,10 @@ Unicode true
 !define PNMDIR "${SRCDIR}\resources\harness\node_modules\.pnpm"
 !endif
 Name "DeepSeek Harness"
-OutFile "${ROOT}\dist\DeepSeek Harness 0.1.2 Portable.exe"
+!ifndef VERSION
+!define VERSION "0.1.3"
+!endif
+OutFile "${ROOT}\dist\DeepSeek Harness ${VERSION} Portable.exe"
 RequestExecutionLevel user
 Icon "${ROOT}\build\icon.ico"
 SetCompressor /SOLID lzma
@@ -28,16 +31,17 @@ Function .onGUIInit
   System::Call "user32::EnableWindow(i r0, i 0)"
 FunctionEnd
 
-VIProductVersion "0.1.2.0"
+VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "DeepSeek Harness"
 VIAddVersionKey "FileDescription" "DeepSeek Harness (Portable)"
-VIAddVersionKey "FileVersion" "0.1.2"
+VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "CompanyName" "DeepSeek"
 VIAddVersionKey "LegalCopyright" "DeepSeek"
 
 ; 便携版：版本匹配则复用已解压的 app，否则重新解压（支持更新换代）；
 ; 运行采用 Exec（不等待），NSIS 立即退出，进度窗口随 app 启动自动消失
 Function .onInit
+  IfFileExists "$EXEDIR\app\DeepSeek Harness.exe" 0 do_extract
   IfFileExists "$EXEDIR\app\.version" 0 do_extract
   FileOpen $0 "$EXEDIR\app\.version" r
   FileRead $0 $1

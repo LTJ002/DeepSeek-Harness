@@ -2,6 +2,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('dshDesktop', {
+    // 自绘标题栏：窗口控制
+    winMinimize: () => ipcRenderer.send('dsh:win-minimize'),
+    winMaximize: () => ipcRenderer.send('dsh:win-maximize'),
+    winClose: () => ipcRenderer.send('dsh:win-close'),
+    winIsMaximized: () => ipcRenderer.invoke('dsh:win-is-maximized'),
+    onWinMaximizedChange: (cb) => ipcRenderer.on('dsh:win-maximized-change', (_e, v) => cb(v)),
     restart: () => ipcRenderer.send('dsh:restart'),
     quit: () => ipcRenderer.send('dsh:quit'),
     reloadHarness: () => ipcRenderer.invoke('dsh:reload-harness'),

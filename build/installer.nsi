@@ -3,7 +3,9 @@ Unicode true
 !include "MUI2.nsh"
 
 !define PRODUCT "DeepSeek Harness"
-!define VERSION "0.1.2"
+!ifndef VERSION
+!define VERSION "0.1.3"
+!endif
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\DeepSeekHarness"
 !ifndef ROOT
 !define ROOT "${__FILEDIR__}\.."
@@ -18,7 +20,7 @@ Unicode true
 !endif
 
 Name "${PRODUCT}"
-OutFile "${ROOT}\dist\DeepSeek Harness Setup 0.1.2.exe"
+OutFile "${ROOT}\dist\DeepSeek Harness Setup ${VERSION}.exe"
 InstallDir "$LOCALAPPDATA\Programs\DeepSeekHarness"
 ; 需要管理员权限：安装完成后添加 Windows Defender 排除项，避免冷启动被实时扫描拖慢
 RequestExecutionLevel admin
@@ -29,7 +31,7 @@ UninstallIcon "${ROOT}\build\icon.ico"
 !define MUI_ICON "${ROOT}\build\icon.ico"
 !define MUI_UNICON "${ROOT}\build\icon.ico"
 
-VIProductVersion "0.1.2.0"
+VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "${PRODUCT}"
 VIAddVersionKey "FileDescription" "${PRODUCT} Setup"
 VIAddVersionKey "FileVersion" "${VERSION}"
