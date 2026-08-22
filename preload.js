@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('dshDesktop', {
     marketDisabledAdd: (repo) => ipcRenderer.invoke('dsh:market-disabled-add', repo),
     marketDisabledRemove: (repo) => ipcRenderer.invoke('dsh:market-disabled-remove', repo),
     updatePlugin: (name) => ipcRenderer.invoke('dsh:plugin-update', name),
+    pluginUpdateCheck: () => ipcRenderer.invoke('dsh:plugin-update-check'),
     aiInstallPlugin: (pkg) => ipcRenderer.invoke('dsh:ai-install-plugin', pkg),
     marketList: (force) => ipcRenderer.invoke('dsh:market-list', force === true),
     resolvePlugin: (repo) => ipcRenderer.invoke('dsh:resolve-plugin', repo),
@@ -58,4 +59,5 @@ contextBridge.exposeInMainWorld('dshDesktop', {
     rewindExecute: (id, signature) => ipcRenderer.invoke('dsh:rewind-execute', id, signature),
     rewindUndo: (guardId) => ipcRenderer.invoke('dsh:rewind-undo', guardId),
     checkUpdate: () => ipcRenderer.invoke('dsh:check-update'),
+    updateDownload: (downloadUrl) => ipcRenderer.invoke('dsh:update-download', downloadUrl),
   });

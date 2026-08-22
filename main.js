@@ -46,6 +46,42 @@ function harnessDir() {
 function harnessBin() {
   return path.join(harnessDir(), 'lib', 'bin.js');
 }
+// ---------- no-console-patch 自愈 ----------
+// 统一解决 Windows 下子进程（git/pnpm/rg/node 等）弹出黑色控制台窗口的问题。
+// 原理：hook child_process 全部 spawn 变体，自动补 windowsHide:true。
+// 内核/插件更新会覆盖 harness\lib\bin.js 与 no-console-patch.cjs，
+// 本函数在每次应用启动时检查并自动恢复，无需手动干预。
+const NO_CONSOLE_PATCH_B64 = 'J3VzZSBzdHJpY3QnOwovKgogKiBEZWVwU2VlayBIYXJuZXNzIOacrOWcsOihpeS4ge+8mue7n+S4gOino+WGsyBXaW5kb3dzIOS4i+WtkOi/m+eoi+W8ueWHuum7keiJsuaOp+WItuWPsOeql+WPo++8iOm7keahhu+8ieeahOmXrumimOOAggogKgogKiDljp/nkIbvvJpXaW5kb3dzIOS4iiBzcGF3biDkuIDkuKrmjqfliLblj7DnqIvluo/vvIhnaXQuZXhl44CBcG5wbS5jbWTjgIFub2RlLmV4ZeOAgXJnLmV4ZSDnrYnvvInml7bvvIwKICog6Iul5pyq5oyH5a6aIHdpbmRvd3NIaWRlOnRydWXvvIhDUkVBVEVfTk9fV0lORE9X77yJ77yM5Y2z5L2/54i26L+b56iL5pys6Lqr5peg5o6n5Yi25Y+w77yM5Lmf5Lya5paw5byA5LiA5LiqCiAqIOWPr+ingeeahOm7keahhueql+WPo+OAgmhhcm5lc3Mg5YaF5qC45Lit5aSn6YeP5a2Q6L+b56iL6LCD55So5pyq6K6+572u6K+l6YCJ6aG577yIZ2l0IOajgOafpS/lv6vnhafjgIFwbnBtIOijheaPkuS7tuOAgQogKiByZyDmkJzntKLnrYnvvInvvIzmnKzooaXkuIHlnKjov5vnqIvlkK/liqjmnIDml6npmLbmrrUgaG9vayBjaGlsZF9wcm9jZXNzIOeahOWFqOmDqCBzcGF3biDlj5jkvZMKICog77yIc3Bhd24gLyBzcGF3blN5bmMgLyBleGVjIC8gZXhlY1N5bmMgLyBleGVjRmlsZSAvIGV4ZWNGaWxlU3luYyAvIGZvcmvvvInvvIwKICog5Li65pyq5pi+5byP5oyH5a6aIHdpbmRvd3NIaWRlIOeahOiwg+eUqOiHquWKqOihpeS4iiB0cnVl77yM5LiA5aSE6KGl5LiB5YWo5bGA55Sf5pWI44CCCiAqCiAqIOimhuebluiMg+WbtO+8mueoi+W6j+WQr+WKqOOAgea6kOS7o+eggeeuoeeQhuiwg+eUqCBnaXTjgIHmj5Lku7blronoo4XvvIhkc2ggcGx1Z2luIGFkZCDovazlj5EgcG5wbe+8ieOAgQogKiDku6Xlj4rku7vkvZXlkI7nu63lronoo4XnmoTmj5Lku7blnKggaGFybmVzcyDov5vnqIvlhoXosIPnlKjnmoTlrZDov5vnqIvvvIzpg73kvJroh6rliqjluKYgd2luZG93c0hpZGXjgIIKICoKICog5YW85a655oCn6K+05piO77yaCiAqICAtIOaYvuW8j+S8oOS6hiB3aW5kb3dzSGlkZTpmYWxzZSDnmoTosIPnlKjvvIjnoa7lrp7mg7PnnIvliLDnqpflj6PvvInkvJrooqvkv53nlZnvvIzkuI3lj5flvbHlk43vvJsKICogIC0g5Y+v6YCa6L+H546v5aKD5Y+Y6YePIERTSF9OT19DT05TT0xFX1BBVENIPTAg5Li05pe25pW05L2T56aB55So5pys6KGl5LiB77yI55So5LqO5o6S5p+l6Zeu6aKY77yJ44CCCiAqCiAqIOS9jee9ru+8mnJlc291cmNlcy9oYXJuZXNzL2xpYi9uby1jb25zb2xlLXBhdGNoLmNqcwogKiDms6jlhaXvvJpiaW4uanMg6aG26YOoIGltcG9ydCAiLi9uby1jb25zb2xlLXBhdGNoLmNqcyLvvIjnlLEgYXBwbHktbm8tY29uc29sZS1wYXRjaC5jbWQg57u05oqk77yJCiAqIOaBouWkje+8muWGheaguOWNh+e6p+aIluaPkuS7tuabtOaWsOWQjiBsaWIvIOiiq+WumOaWueWMheimhuebluaXtu+8jOmHjeaWsOi/kOihjAogKiAgICAgICByZXNvdXJjZXMvcGF0Y2gvYXBwbHktbm8tY29uc29sZS1wYXRjaC5jbWQg5Y2z5Y+v5oGi5aSN44CCCiAqLwoKaWYgKHByb2Nlc3MucGxhdGZvcm0gIT09ICd3aW4zMicgfHwgcHJvY2Vzcy5lbnYuRFNIX05PX0NPTlNPTEVfUEFUQ0ggPT09ICcwJykgewoJbW9kdWxlLmV4cG9ydHMgPSBudWxsOwoJcmV0dXJuOwp9Ci8vIOWFqOWxgOW5guetie+8muiLpei/m+eoi+e6p+mihOWKoOi9veihpeS4ge+8iE5PREVfT1BUSU9OUyAtLXJlcXVpcmUg5pys6KGl5LiB5paH5Lu277yJCi8vIOW3sue7j+W6lOeUqOi/h++8jOi/memHjOebtOaOpemAgOWHuu+8jOmBv+WFjemHjeWkjeWMheijuSBjaGlsZF9wcm9jZXNz44CCCmlmIChnbG9iYWxUaGlzLl9fRFNIX05PX0NPTlNPTEVfUEFUQ0hFRF9fKSB7Cgltb2R1bGUuZXhwb3J0cyA9IG51bGw7CglyZXR1cm47Cn0KZ2xvYmFsVGhpcy5fX0RTSF9OT19DT05TT0xFX1BBVENIRURfXyA9IHRydWU7CgovLyDkvKDmkq3vvJrorqnmnKzov5vnqIvmtL7nlJ/nmoTmiYDmnIkgbm9kZSDlrZDov5vnqIvvvIh3b3JrZXIgLyDlrZDku6PnkIYgLyDlt6Xlhbfov5vnqIvvvInoh6rliqjliqDovb3mnKzooaXkuIHjgIIKLy8g5ZCm5YiZ5a2Q6L+b56iL5piv5YWo5paw6L+b56iL77yM5YaF6YOo5YaNIHNwYXduIGdpdC9iYXNoIOaXtuS7jeS8muW8uem7keahhu+8iOihpeS4geWPqueuoeW+l+WIsOW9k+WJjei/m+eoi++8ieOAggp0cnkgewoJY29uc3QgZmlsZSA9IF9fZmlsZW5hbWUucmVwbGFjZSgvXFwvZywgJy8nKTsKCWlmICghL1xzLy50ZXN0KGZpbGUpKSB7CgkJY29uc3QgcmVxID0gYC0tcmVxdWlyZT0ke2ZpbGV9YDsKCQljb25zdCBjdXIgPSBwcm9jZXNzLmVudi5OT0RFX09QVElPTlMgfHwgJyc7CgkJaWYgKCFjdXIuaW5jbHVkZXMocmVxKSkgcHJvY2Vzcy5lbnYuTk9ERV9PUFRJT05TID0gW2N1ciwgcmVxXS5maWx0ZXIoQm9vbGVhbikuam9pbignICcpOwoJCWlmIChwcm9jZXNzLmVudi5EU0hfTk9fQ09OU09MRV9QQVRDSCA9PT0gdW5kZWZpbmVkKSBwcm9jZXNzLmVudi5EU0hfTk9fQ09OU09MRV9QQVRDSCA9ICcxJzsKCX0KfSBjYXRjaCB7fQoKLy8gd29ya2VyX3RocmVhZHMg5rOo5YWl77yad29ya2VyIOaYr+eLrOeriyBKUyDnjq/looPvvIzkuI3nu6fmib8gTk9ERV9PUFRJT05T77yMCi8vIOWFtuS4rSBgaW1wb3J0IHsgc3Bhd24gfWAg5b+r54Wn5Yiw5Y6f5aeLIGNoaWxkX3Byb2Nlc3Mg5ZCO5LuN5Lya5by556qX44CCCi8vIOmAmui/hyB3b3JrZXJfdGhyZWFkcyDmqKHlnZfnmoQgV29ya2VyIOaehOmAoOWHveaVsO+8jOaKiiAtLXJlcXVpcmU95pys6KGl5LiBIOi/veWKoOWIsCBleGVjQXJndu+8jAovLyDkvb8gd29ya2VyIOWQr+WKqOWNs+mihOWKoOi9veihpeS4ge+8iOatpOaXtuWFtiBFU00g5Zu+5pyq6ZO+5o6l77yM5b+r54Wn5ou/5Yiw6KGl5LiB5ZCO55qEIHNwYXdu77yJ44CCCnRyeSB7Cgljb25zdCBmaWxlMiA9IF9fZmlsZW5hbWUucmVwbGFjZSgvXFwvZywgJy8nKTsKCWlmICghL1xzLy50ZXN0KGZpbGUyKSkgewoJCWNvbnN0IE1vZHVsZSA9IHJlcXVpcmUoJ25vZGU6bW9kdWxlJyk7CgkJY29uc3Qgb3JpZ0xvYWQyID0gTW9kdWxlLl9sb2FkOwoJCU1vZHVsZS5fbG9hZCA9IGZ1bmN0aW9uIChyZXF1ZXN0LCBwYXJlbnQsIGlzTWFpbikgewoJCQljb25zdCBsb2FkZWQgPSBvcmlnTG9hZDIuYXBwbHkodGhpcywgYXJndW1lbnRzKTsKCQkJaWYgKHJlcXVlc3QgPT09ICdub2RlOndvcmtlcl90aHJlYWRzJyAmJiBsb2FkZWQgJiYgbG9hZGVkLldvcmtlciAmJiAhbG9hZGVkLldvcmtlci5fX2RzaE5vQ29uc29sZVBhdGNoZWQpIHsKCQkJCXRyeSB7CgkJCQkJY29uc3QgT3JpZ1dvcmtlciA9IGxvYWRlZC5Xb3JrZXI7CgkJCQkJY29uc3QgcmVxMiA9IGAtLXJlcXVpcmU9JHtmaWxlMn1gOwoJCQkJCWxvYWRlZC5Xb3JrZXIgPSBjbGFzcyBXb3JrZXIgZXh0ZW5kcyBPcmlnV29ya2VyIHsKCQkJCQkJY29uc3RydWN0b3IoZmlsZW5hbWUsIG9wdGlvbnMpIHsKCQkJCQkJCWlmIChvcHRpb25zICYmIHR5cGVvZiBvcHRpb25zID09PSAnb2JqZWN0JyAmJiBvcHRpb25zLmV4ZWNBcmd2ICE9PSB1bmRlZmluZWQgJiYgb3B0aW9ucy5leGVjQXJndiAhPT0gbnVsbCkgewoJCQkJCQkJCWNvbnN0IGFyciA9IEFycmF5LmlzQXJyYXkob3B0aW9ucy5leGVjQXJndikgPyBvcHRpb25zLmV4ZWNBcmd2IDogW29wdGlvbnMuZXhlY0FyZ3ZdOwoJCQkJCQkJCWlmICghYXJyLmluY2x1ZGVzKHJlcTIpKSBvcHRpb25zID0geyAuLi5vcHRpb25zLCBleGVjQXJndjogWy4uLmFyciwgcmVxMl0gfTsKCQkJCQkJCX0gZWxzZSB7CgkJCQkJCQkJb3B0aW9ucyA9IHsgLi4uKG9wdGlvbnMgfHwge30pLCBleGVjQXJndjogW3JlcTJdIH07CgkJCQkJCQl9CgkJCQkJCQlzdXBlcihmaWxlbmFtZSwgb3B0aW9ucyk7CgkJCQkJCX0KCQkJCQl9OwoJCQkJCS8vIOS/neeVmeexu+WQjeWFvOWuue+8iOmDqOWIhuS7o+eggeajgOafpSBjb25zdHJ1Y3Rvci5uYW1lIOaIliBpbnN0YW5jZW9m77yJCgkJCQkJT2JqZWN0LmRlZmluZVByb3BlcnR5KGxvYWRlZC5Xb3JrZXIsICduYW1lJywgeyB2YWx1ZTogJ1dvcmtlcicgfSk7CgkJCQkJbG9hZGVkLldvcmtlci5fX2RzaE5vQ29uc29sZVBhdGNoZWQgPSB0cnVlOwoJCQkJfSBjYXRjaCB7fQoJCQl9CgkJCXJldHVybiBsb2FkZWQ7CgkJfTsKCX0KfSBjYXRjaCB7fQoKY29uc3QgY3AgPSByZXF1aXJlKCdub2RlOmNoaWxkX3Byb2Nlc3MnKTsKCmxldCBhcHBsaWVkID0gZmFsc2U7CgovKiog5piv5ZCm5piv5LiA5LiqIumAiemhueWvueixoSLvvIjogIzpnZ7mlbDnu4QgLyBSZWdFeHAgLyBTdHJpbmcg5a+56LGh562J77yJ44CCICovCmNvbnN0IGlzT3B0cyA9ICh2KSA9PiB2ICE9PSBudWxsICYmIHR5cGVvZiB2ID09PSAnb2JqZWN0JyAmJiAhQXJyYXkuaXNBcnJheSh2KSAmJiAhKHYgaW5zdGFuY2VvZiBSZWdFeHApICYmICEodiBpbnN0YW5jZW9mIFN0cmluZyk7CgovKioKICog5Li65pyq5pi+5byP5oyH5a6aIHdpbmRvd3NIaWRlIOeahOmAiemhueihpeS4iiB0cnVl44CCCiAqIOi/lOWbnuaWsOWvueixoeiAjOmdnuWOn+WcsOS/ruaUueiwg+eUqOaWueeahCBvcHRpb25z77yM6YG/5YWN5ZCO57ut5aSN55SoIG9wdGlvbnMg5pe25Ye6546w5oSP5aSW5Ymv5L2c55So77ybCiAqIOaYvuW8j+WGmeS6hiB3aW5kb3dzSGlkZe+8iOaXoOiuuiB0cnVlL2ZhbHNl77yJ5YiZ5Y6f5qC36L+U5Zue44CCCiAqLwpmdW5jdGlvbiB3aXRoSGlkZShvcHRpb25zKSB7CglpZiAob3B0aW9ucyA9PT0gdW5kZWZpbmVkIHx8IG9wdGlvbnMgPT09IG51bGwpIHJldHVybiB7IHdpbmRvd3NIaWRlOiB0cnVlIH07CglpZiAoaXNPcHRzKG9wdGlvbnMpKSB7CgkJaWYgKG9wdGlvbnMud2luZG93c0hpZGUgPT09IHVuZGVmaW5lZCkgcmV0dXJuIHsgLi4ub3B0aW9ucywgd2luZG93c0hpZGU6IHRydWUgfTsKCQlyZXR1cm4gb3B0aW9uczsKCX0KCXJldHVybiBvcHRpb25zOwp9CgovKiogc3Bhd24oY29tbWFuZFssIGFyZ3NdWywgb3B0aW9uc10pIC8gc3Bhd25TeW5jIOWQjOetvuWQjeOAgiAqLwpmdW5jdGlvbiBwYXRjaFNwYXduTGlrZShuYW1lKSB7Cgljb25zdCBvcmlnID0gY3BbbmFtZV07CgljcFtuYW1lXSA9IGZ1bmN0aW9uIChjb21tYW5kLCBhcmdzLCBvcHRpb25zKSB7CgkJaWYgKGlzT3B0cyhhcmdzKSkgcmV0dXJuIG9yaWcuY2FsbCh0aGlzLCBjb21tYW5kLCB3aXRoSGlkZShhcmdzKSk7CgkJcmV0dXJuIG9yaWcuY2FsbCh0aGlzLCBjb21tYW5kLCBhcmdzLCB3aXRoSGlkZShvcHRpb25zKSk7Cgl9Owp9CgovKiogZXhlYyhjb21tYW5kWywgb3B0aW9uc11bLCBjYWxsYmFja10pIC8gZXhlY1N5bmMoY29tbWFuZFssIG9wdGlvbnNdKeOAgiAqLwpmdW5jdGlvbiBwYXRjaEV4ZWNMaWtlKG5hbWUpIHsKCWNvbnN0IG9yaWcgPSBjcFtuYW1lXTsKCWNwW25hbWVdID0gZnVuY3Rpb24gKGNvbW1hbmQsIG9wdGlvbnMsIGNhbGxiYWNrKSB7CgkJaWYgKHR5cGVvZiBvcHRpb25zID09PSAnZnVuY3Rpb24nKSB7CgkJCWNhbGxiYWNrID0gb3B0aW9uczsKCQkJb3B0aW9ucyA9IHVuZGVmaW5lZDsKCQl9CgkJcmV0dXJuIG9yaWcuY2FsbCh0aGlzLCBjb21tYW5kLCB3aXRoSGlkZShvcHRpb25zKSwgY2FsbGJhY2spOwoJfTsKfQoKLyoqIGV4ZWNGaWxlKGZpbGVbLCBhcmdzXVssIG9wdGlvbnNdWywgY2FsbGJhY2tdKSAvIGV4ZWNGaWxlU3luYyhmaWxlWywgYXJnc11bLCBvcHRpb25zXSnjgIIgKi8KZnVuY3Rpb24gcGF0Y2hFeGVjRmlsZUxpa2UobmFtZSkgewoJY29uc3Qgb3JpZyA9IGNwW25hbWVdOwoJY3BbbmFtZV0gPSBmdW5jdGlvbiAoZmlsZSwgYXJncywgb3B0aW9ucywgY2FsbGJhY2spIHsKCQlpZiAodHlwZW9mIGFyZ3MgPT09ICdmdW5jdGlvbicpIHsKCQkJY2FsbGJhY2sgPSBhcmdzOwoJCQlhcmdzID0gdW5kZWZpbmVkOwoJCQlvcHRpb25zID0gdW5kZWZpbmVkOwoJCX0gZWxzZSBpZiAoaXNPcHRzKGFyZ3MpKSB7CgkJCWNhbGxiYWNrID0gb3B0aW9uczsKCQkJb3B0aW9ucyA9IGFyZ3M7CgkJCWFyZ3MgPSB1bmRlZmluZWQ7CgkJfSBlbHNlIGlmICh0eXBlb2Ygb3B0aW9ucyA9PT0gJ2Z1bmN0aW9uJykgewoJCQljYWxsYmFjayA9IG9wdGlvbnM7CgkJCW9wdGlvbnMgPSB1bmRlZmluZWQ7CgkJfQoJCXJldHVybiBvcmlnLmNhbGwodGhpcywgZmlsZSwgYXJncywgd2l0aEhpZGUob3B0aW9ucyksIGNhbGxiYWNrKTsKCX07Cn0KCi8qKiBmb3JrKG1vZHVsZVBhdGhbLCBhcmdzXVssIG9wdGlvbnNdKSDigJTigJQgZm9yayDlhoXpg6jotbDnmoTmmK/ljp/nlJ/nmoQgc3Bhd24g6Zet5YyF77yM5b+F6aG75Y2V54us5YyF5LiA5bGC44CCICovCmZ1bmN0aW9uIHBhdGNoRm9yaygpIHsKCWlmICh0eXBlb2YgY3AuZm9yayAhPT0gJ2Z1bmN0aW9uJykgcmV0dXJuOwoJY29uc3Qgb3JpZyA9IGNwLmZvcms7CgljcC5mb3JrID0gZnVuY3Rpb24gKG1vZHVsZVBhdGgsIGFyZ3MsIG9wdGlvbnMpIHsKCQlpZiAoaXNPcHRzKGFyZ3MpKSByZXR1cm4gb3JpZy5jYWxsKHRoaXMsIG1vZHVsZVBhdGgsIHdpdGhIaWRlKGFyZ3MpKTsKCQlyZXR1cm4gb3JpZy5jYWxsKHRoaXMsIG1vZHVsZVBhdGgsIGFyZ3MsIHdpdGhIaWRlKG9wdGlvbnMpKTsKCX07Cn0KCmZ1bmN0aW9uIGFwcGx5KCkgewoJaWYgKGFwcGxpZWQpIHJldHVybjsgLy8g5bmC562J77ya6YG/5YWN6YeN5aSN5rOo5YWl5pe26YeN5aSN5YyF6KO5CglhcHBsaWVkID0gdHJ1ZTsKCXBhdGNoU3Bhd25MaWtlKCdzcGF3bicpOwoJcGF0Y2hTcGF3bkxpa2UoJ3NwYXduU3luYycpOwoJcGF0Y2hFeGVjTGlrZSgnZXhlYycpOwoJcGF0Y2hFeGVjTGlrZSgnZXhlY1N5bmMnKTsKCXBhdGNoRXhlY0ZpbGVMaWtlKCdleGVjRmlsZScpOwoJcGF0Y2hFeGVjRmlsZUxpa2UoJ2V4ZWNGaWxlU3luYycpOwoJcGF0Y2hGb3JrKCk7CgkvLyBub2RlLXB0ee+8mldpbmRvd3Mg5LiL5by65Yi2IENvblBUWe+8iOS8quaOp+WItuWPsOaXoOWPr+ingeeql+WPo++8ie+8jAoJLy8g6YG/5YWN5L6n6L655qCP57uI56uvIC8gYmFzaCAvIHB3c2gg55qEIFBUWSDmi4notbfml7bpl6rpu5HmoYbvvIhub2RlLXB0eSDkuI3otbAgY2hpbGRfcHJvY2Vzc++8ieOAggoJdHJ5IHsKCQljb25zdCBNb2R1bGUgPSByZXF1aXJlKCdub2RlOm1vZHVsZScpOwoJCWNvbnN0IG9yaWdMb2FkID0gTW9kdWxlLl9sb2FkOwoJCU1vZHVsZS5fbG9hZCA9IGZ1bmN0aW9uIChyZXF1ZXN0LCBwYXJlbnQsIGlzTWFpbikgewoJCQljb25zdCBsb2FkZWQgPSBvcmlnTG9hZC5hcHBseSh0aGlzLCBhcmd1bWVudHMpOwoJCQlpZiAocmVxdWVzdCA9PT0gJ25vZGUtcHR5JyAmJiBsb2FkZWQgJiYgdHlwZW9mIGxvYWRlZC5zcGF3biA9PT0gJ2Z1bmN0aW9uJyAmJiAhbG9hZGVkLl9fZHNoTm9Db25zb2xlUGF0Y2hlZCkgewoJCQkJdHJ5IHsKCQkJCQljb25zdCBvcmlnU3Bhd24gPSBsb2FkZWQuc3Bhd247CgkJCQkJbG9hZGVkLnNwYXduID0gZnVuY3Rpb24gKGZpbGUsIGFyZ3MsIG9wdGlvbnMpIHsKCQkJCQkJaWYgKHByb2Nlc3MucGxhdGZvcm0gPT09ICd3aW4zMicpIHsKCQkJCQkJCWlmIChpc09wdHMob3B0aW9ucykpIHsKCQkJCQkJCQlpZiAob3B0aW9ucy51c2VDb25wdHkgPT09IHVuZGVmaW5lZCkgb3B0aW9ucyA9IHsgLi4ub3B0aW9ucywgdXNlQ29ucHR5OiB0cnVlIH07CgkJCQkJCQkJcmV0dXJuIG9yaWdTcGF3bi5jYWxsKHRoaXMsIGZpbGUsIGFyZ3MsIG9wdGlvbnMpOwoJCQkJCQkJfQoJCQkJCQkJaWYgKGlzT3B0cyhhcmdzKSkgewoJCQkJCQkJCWlmIChhcmdzLnVzZUNvbnB0eSA9PT0gdW5kZWZpbmVkKSBhcmdzID0geyAuLi5hcmdzLCB1c2VDb25wdHk6IHRydWUgfTsKCQkJCQkJCQlyZXR1cm4gb3JpZ1NwYXduLmNhbGwodGhpcywgZmlsZSwgYXJncyk7CgkJCQkJCQl9CgkJCQkJCX0KCQkJCQkJcmV0dXJuIG9yaWdTcGF3bi5hcHBseSh0aGlzLCBhcmd1bWVudHMpOwoJCQkJCX07CgkJCQkJbG9hZGVkLl9fZHNoTm9Db25zb2xlUGF0Y2hlZCA9IHRydWU7CgkJCQl9IGNhdGNoIHt9CgkJCX0KCQkJcmV0dXJuIGxvYWRlZDsKCQl9OwoJfSBjYXRjaCB7fQp9CgphcHBseSgpOwoKLy8gPT09PT0g5paw5aKe77yaa29mZmkgQ3JlYXRlUHJvY2Vzc0FzVXNlclcg5by556qX5L+u5aSN77yI5rKZ566x6buR5qGGL+iTneahhu+8iSA9PT09PQovLyDog4zmma/vvJpkc2gtc2FuZGJveC13aW5kb3dzLWFjbCDmspnnrrHpgJrov4cga29mZmkg55u05o6l6LCDIFdpbjMyIENyZWF0ZVByb2Nlc3NBc1VzZXJX77yMCi8vIOS4jei1sCBjaGlsZF9wcm9jZXNz77yM5LiK6L+wIGhvb2sg566h5LiN5Yiw44CC5YW2IGR3Q3JlYXRpb25GbGFncyDlj6rmnIkgQ1JFQVRFX1NVU1BFTkRFRCg0Ke+8jAovLyDml6AgQ1JFQVRFX05PX1dJTkRPVygweDA4MDAwMDAwKeKAlOKAlOeItui/m+eoi+aXoOaOp+WItuWPsOaXtu+8iOahjOmdoueJiOWcuuaZr++8ie+8jOezu+e7n+S8muS4ugovLyBnaXQvcHdzaCDnrYnmjqfliLblj7DnqIvluo/mlrDlu7rlj6/op4Hnu4jnq6/nqpflj6PvvIjpu5HmoYY9Y29uaG9zdO+8jOiTneahhj1XaW5kb3dzIFRlcm1pbmFs77yJ44CCCi8vIOS/ruWkje+8muWMheijhSBrb2ZmaS5sb2FkKCkg6L+U5Zue55qEIGxpYu+8iFByb3h5IOe7lei/h+WOn+eUn+WPquivu+WxnuaAp++8ie+8jOe7mQovLyBDcmVhdGVQcm9jZXNzQXNVc2VyVyDoh6rliqjooaXkuIogQ1JFQVRFX05PX1dJTkRPV+OAgue7j+Wunua1i++8iOacrOacuiBXaW4xMe+8ieWPl+mZkCB0b2tlbgovLyDkuIvliqDor6XmoIflv5fkuI3kvJrop6blj5Hlrpjmlrnms6jph4rmi4Xlv4PnmoQgMHhDMDAwMDE0Mu+8jGdpdC9wd3NoIOaymeeuseWGheato+W4uOi/kOihjOOAggovLyDopobnm5bkuKTmnaHpk77ot6/vvJoKLy8gICBBLiDmnKzov5vnqIsgQ0pTIHJlcXVpcmUoJ2tvZmZpJykg4oCU4oCUIOWQjOatpeWMheijhSBleHBvcnRzLmxvYWTvvJsKLy8gICBCLiDmnKzov5vnqIsgRVNNIGltcG9ydCAna29mZmkn77yI5ZCrIC0tcmVxdWlyZSDpooTliqDovb3nmoTpmpTnprvkuIrkuIvmlofvvIwKLy8gICAgICByZWdpc3Rlckhvb2tzIOaYr+i/m+eoi+e6p+WFqOWxgOmSqeWtkO+8jOWvueS4u+WFpeWPoyBFU00g5qih5Z2X5Zu+5ZCM5qC355Sf5pWI77yJ4oCU4oCUCi8vICAgICAg6YCa6L+HIHJlZ2lzdGVySG9va3MgcmVzb2x2ZSDmiooga29mZmkg6YeN5a6a5ZCR5Yiw5ZCM55uu5b2VIGtvZmZpLXNoaW0ubWpz77yMCi8vICAgICAgc2hpbSDlhoXljIXoo4Xljp/lrp7kvovlkI4gcmUtZXhwb3J044CCCmNvbnN0IEtPRkZJX01BUksgPSAnX19kc2hOb0NvbnNvbGVQYXRjaGVkJzsKCi8qKiDmnoTpgKDljIXoo4XlkI7nmoQga29mZmkubG9hZO+8mmxpYi5mdW5jIOe7keWumiBDcmVhdGVQcm9jZXNzQXNVc2VyVyDml7bov5Tlm57liqAgQ1JFQVRFX05PX1dJTkRPVyDnmoTljIXoo4XjgIIgKi8KZnVuY3Rpb24gbWFrZUtvZmZpTG9hZFdyYXBwZXIob3JpZ0xvYWQpIHsKCWNvbnN0IHByb3h5Q2FjaGUgPSBuZXcgV2Vha01hcCgpOwoJcmV0dXJuIGZ1bmN0aW9uICguLi5hcmdzKSB7CgkJY29uc3QgbGliID0gb3JpZ0xvYWQuYXBwbHkodGhpcywgYXJncyk7CgkJaWYgKGxpYiAmJiB0eXBlb2YgbGliLmZ1bmMgPT09ICdmdW5jdGlvbicpIHsKCQkJbGV0IHByb3hpZWQgPSBwcm94eUNhY2hlLmdldChsaWIpOwoJCQlpZiAoIXByb3hpZWQpIHsKCQkJCXByb3hpZWQgPSBuZXcgUHJveHkobGliLCB7CgkJCQkJZ2V0KHRhcmdldCwgcHJvcCwgcmVjZWl2ZXIpIHsKCQkJCQkJaWYgKHByb3AgPT09ICdmdW5jJykgewoJCQkJCQkJcmV0dXJuIGZ1bmN0aW9uIChhYmksIG5hbWUsIHJlc3VsdCwgcGFyYW1zKSB7CgkJCQkJCQkJY29uc3QgZm4gPSB0YXJnZXQuZnVuYy5jYWxsKHRhcmdldCwgYWJpLCBuYW1lLCByZXN1bHQsIHBhcmFtcyk7CgkJCQkJCQkJaWYgKG5hbWUgPT09ICdDcmVhdGVQcm9jZXNzQXNVc2VyVycgJiYgdHlwZW9mIGZuID09PSAnZnVuY3Rpb24nKSB7CgkJCQkJCQkJCXJldHVybiBmdW5jdGlvbiAoLi4uY2FsbEFyZ3MpIHsKCQkJCQkJCQkJCWlmIChjYWxsQXJncy5sZW5ndGggPj0gNykgewoJCQkJCQkJCQkJCWNvbnN0IGZsYWdzID0gY2FsbEFyZ3NbNl07CgkJCQkJCQkJCQkJaWYgKHR5cGVvZiBmbGFncyA9PT0gJ251bWJlcicgJiYgKGZsYWdzICYgMHgwODAwMDAwMCkgPT09IDApIHsKCQkJCQkJCQkJCQkJY2FsbEFyZ3NbNl0gPSBmbGFncyB8IDB4MDgwMDAwMDA7CgkJCQkJCQkJCQkJfQoJCQkJCQkJCQkJfQoJCQkJCQkJCQkJcmV0dXJuIGZuLmFwcGx5KHRoaXMsIGNhbGxBcmdzKTsKCQkJCQkJCQkJfTsKCQkJCQkJCQl9CgkJCQkJCQkJcmV0dXJuIGZuOwoJCQkJCQkJfTsKCQkJCQkJfQoJCQkJCQlyZXR1cm4gUmVmbGVjdC5nZXQodGFyZ2V0LCBwcm9wLCByZWNlaXZlcik7CgkJCQkJfQoJCQkJfSk7CgkJCQlwcm94eUNhY2hlLnNldChsaWIsIHByb3hpZWQpOwoJCQl9CgkJCXJldHVybiBwcm94aWVkOwoJCX0KCQlyZXR1cm4gbGliOwoJfTsKfQoKaWYgKHByb2Nlc3MucGxhdGZvcm0gPT09ICd3aW4zMicpIHsKCS8vIEEuIENKUyDlrp7kvosKCXRyeSB7CgkJY29uc3Qga29mZmkgPSByZXF1aXJlKCdrb2ZmaScpOwoJCWlmIChrb2ZmaSAmJiB0eXBlb2Yga29mZmkubG9hZCA9PT0gJ2Z1bmN0aW9uJyAmJiAha29mZmlbS09GRklfTUFSS10pIHsKCQkJa29mZmkubG9hZCA9IG1ha2VLb2ZmaUxvYWRXcmFwcGVyKGtvZmZpLmxvYWQpOwoJCQlrb2ZmaVtLT0ZGSV9NQVJLXSA9IHRydWU7CgkJfQoJfSBjYXRjaCB7fQoKCS8vIEIuIEVTTSDlrp7kvovvvIhyZWdpc3Rlckhvb2tzIOWFqOWxgOeUn+aViO+8jOimhuebliAtLXJlcXVpcmUg6aKE5Yqg6L2955qE6ZqU56a75LiK5LiL5paH77yJCgl0cnkgewoJCWNvbnN0IHsgcmVnaXN0ZXJIb29rcyB9ID0gcmVxdWlyZSgnbm9kZTptb2R1bGUnKTsKCQlpZiAodHlwZW9mIHJlZ2lzdGVySG9va3MgPT09ICdmdW5jdGlvbicgJiYgIWdsb2JhbFRoaXMuX19EU0hfS09GRklfSE9PS1NfUkVHSVNURVJFRF9fKSB7CgkJCWdsb2JhbFRoaXMuX19EU0hfS09GRklfSE9PS1NfUkVHSVNURVJFRF9fID0gdHJ1ZTsKCQkJY29uc3QgcGF0aCA9IHJlcXVpcmUoJ25vZGU6cGF0aCcpOwoJCQljb25zdCBmcyA9IHJlcXVpcmUoJ25vZGU6ZnMnKTsKCQkJY29uc3QgdXJsID0gcmVxdWlyZSgnbm9kZTp1cmwnKTsKCQkJY29uc3Qgc2hpbVBhdGggPSBwYXRoLmpvaW4oX19kaXJuYW1lLCAna29mZmktc2hpbS5tanMnKTsKCQkJaWYgKCFmcy5leGlzdHNTeW5jKHNoaW1QYXRoKSkgewoJCQkJY29uc3Qga29mZmlVcmwgPSB1cmwucGF0aFRvRmlsZVVSTChwYXRoLmpvaW4oX19kaXJuYW1lLCAnLi4nLCAnbm9kZV9tb2R1bGVzJywgJ2tvZmZpJywgJ2luZGV4LmpzJykpLmhyZWY7CgkJCQljb25zdCBzaGltU291cmNlID0gYGltcG9ydCBrb2ZmaSBmcm9tICR7SlNPTi5zdHJpbmdpZnkoa29mZmlVcmwpfTsKY29uc3QgTUFSSyA9ICdfX2RzaE5vQ29uc29sZVBhdGNoZWQnOwppZiAoa29mZmkgJiYgdHlwZW9mIGtvZmZpLmxvYWQgPT09ICdmdW5jdGlvbicgJiYgIWtvZmZpW01BUktdKSB7CiAgY29uc3QgcHJveHlDYWNoZSA9IG5ldyBXZWFrTWFwKCk7CiAgY29uc3Qgb3JpZ0xvYWQgPSBrb2ZmaS5sb2FkOwogIGtvZmZpLmxvYWQgPSBmdW5jdGlvbiAoLi4uYXJncykgewogICAgY29uc3QgbGliID0gb3JpZ0xvYWQuYXBwbHkodGhpcywgYXJncyk7CiAgICBpZiAobGliICYmIHR5cGVvZiBsaWIuZnVuYyA9PT0gJ2Z1bmN0aW9uJykgewogICAgICBsZXQgcHJveGllZCA9IHByb3h5Q2FjaGUuZ2V0KGxpYik7CiAgICAgIGlmICghcHJveGllZCkgewogICAgICAgIHByb3hpZWQgPSBuZXcgUHJveHkobGliLCB7CiAgICAgICAgICBnZXQodGFyZ2V0LCBwcm9wLCByZWNlaXZlcikgewogICAgICAgICAgICBpZiAocHJvcCA9PT0gJ2Z1bmMnKSB7CiAgICAgICAgICAgICAgcmV0dXJuIGZ1bmN0aW9uIChhYmksIG5hbWUsIHJlc3VsdCwgcGFyYW1zKSB7CiAgICAgICAgICAgICAgICBjb25zdCBmbiA9IHRhcmdldC5mdW5jLmNhbGwodGFyZ2V0LCBhYmksIG5hbWUsIHJlc3VsdCwgcGFyYW1zKTsKICAgICAgICAgICAgICAgIGlmIChuYW1lID09PSAnQ3JlYXRlUHJvY2Vzc0FzVXNlclcnICYmIHR5cGVvZiBmbiA9PT0gJ2Z1bmN0aW9uJykgewogICAgICAgICAgICAgICAgICByZXR1cm4gZnVuY3Rpb24gKC4uLmNhbGxBcmdzKSB7CiAgICAgICAgICAgICAgICAgICAgaWYgKGNhbGxBcmdzLmxlbmd0aCA+PSA3KSB7CiAgICAgICAgICAgICAgICAgICAgICBjb25zdCBmbGFncyA9IGNhbGxBcmdzWzZdOwogICAgICAgICAgICAgICAgICAgICAgaWYgKHR5cGVvZiBmbGFncyA9PT0gJ251bWJlcicgJiYgKGZsYWdzICYgMHgwODAwMDAwMCkgPT09IDApIGNhbGxBcmdzWzZdID0gZmxhZ3MgfCAweDA4MDAwMDAwOwogICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgICAgICByZXR1cm4gZm4uYXBwbHkodGhpcywgY2FsbEFyZ3MpOwogICAgICAgICAgICAgICAgICB9OwogICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgcmV0dXJuIGZuOwogICAgICAgICAgICAgIH07CiAgICAgICAgICAgIH0KICAgICAgICAgICAgcmV0dXJuIFJlZmxlY3QuZ2V0KHRhcmdldCwgcHJvcCwgcmVjZWl2ZXIpOwogICAgICAgICAgfQogICAgICAgIH0pOwogICAgICAgIHByb3h5Q2FjaGUuc2V0KGxpYiwgcHJveGllZCk7CiAgICAgIH0KICAgICAgcmV0dXJuIHByb3hpZWQ7CiAgICB9CiAgICByZXR1cm4gbGliOwogIH07CiAga29mZmlbTUFSS10gPSB0cnVlOwp9CmV4cG9ydCBkZWZhdWx0IGtvZmZpOwpgOwoJCQkJZnMud3JpdGVGaWxlU3luYyhzaGltUGF0aCwgc2hpbVNvdXJjZSwgJ3V0ZjgnKTsKCQkJfQoJCQljb25zdCBzaGltVXJsID0gdXJsLnBhdGhUb0ZpbGVVUkwoc2hpbVBhdGgpLmhyZWY7CgkJCXJlZ2lzdGVySG9va3MoewoJCQkJcmVzb2x2ZShzcGVjaWZpZXIsIGNvbnRleHQsIG5leHRSZXNvbHZlKSB7CgkJCQkJaWYgKHNwZWNpZmllciA9PT0gJ2tvZmZpJyB8fCBzcGVjaWZpZXIuc3RhcnRzV2l0aCgna29mZmkvJykpIHsKCQkJCQkJcmV0dXJuIHsgdXJsOiBzaGltVXJsLCBzaG9ydENpcmN1aXQ6IHRydWUgfTsKCQkJCQl9CgkJCQkJcmV0dXJuIG5leHRSZXNvbHZlKHNwZWNpZmllciwgY29udGV4dCk7CgkJCQl9CgkJCX0pOwoJCX0KCX0gY2F0Y2gge30KfQoKbW9kdWxlLmV4cG9ydHMgPSBudWxsOwo=';
+function ensureNoConsolePatch() {
+  try {
+    const libDir = path.join(harnessDir(), 'lib');
+    const patchFile = path.join(libDir, 'no-console-patch.cjs');
+    const binFile = path.join(libDir, 'bin.js');
+    fs.mkdirSync(libDir, { recursive: true });
+    const wantPatch = Buffer.from(NO_CONSOLE_PATCH_B64, 'base64').toString('utf8');
+    if (!fs.existsSync(patchFile)) {
+      fs.writeFileSync(patchFile, wantPatch, 'utf8');
+    } else if (
+      /CreateProcessAsUserW/.test(wantPatch) &&
+      !fs.readFileSync(patchFile, 'utf8').includes('CreateProcessAsUserW')
+    ) {
+      fs.writeFileSync(patchFile, wantPatch, 'utf8');
+      appendLog('[desktop] no-console-patch 已升级到 koffi 修复版（v0.2）\n');
+    }
+    if (fs.existsSync(binFile)) {
+      let content = fs.readFileSync(binFile, 'utf8');
+      if (!content.includes('no-console-patch')) {
+        const hasBom = content.charCodeAt(0) === 0xFEFF;
+        const body = hasBom ? content.slice(1) : content;
+        const patched = body.replace(/^#!\/usr\/bin\/env node(\r?\n)/, '#!\/usr\/bin\/env node$1import "./no-console-patch.cjs";$1');
+        fs.writeFileSync(binFile, (hasBom ? '\uFEFF' : '') + patched, 'utf8');
+        appendLog('[desktop] no-console-patch 已注入 bin.js\n');
+      }
+    }
+  } catch (err) {
+    appendLog(`[desktop] no-console-patch self-heal failed: ${err && err.message || err}\n`);
+  }
+}
 function runtimeDir() {
   return path.join(resourcesRoot(), 'runtime');
 }
@@ -384,7 +420,12 @@ function startHarness() {
       // V8 编译缓存：首次启动把解析/编译的字节码落盘，之后冷启动跳过重复编译，显著加快
       const compileCacheDir = path.join(dshHome(), 'cache', 'node-compile');
       try { fs.mkdirSync(compileCacheDir, { recursive: true }); } catch {}
-      const harnessEnv = Object.assign({}, process.env, { NODE_COMPILE_CACHE: compileCacheDir });
+      const noConsolePreload = path.join(harnessDir(), 'lib', 'no-console-patch.cjs');
+      const harnessEnv = Object.assign({}, process.env, {
+        NODE_COMPILE_CACHE: compileCacheDir,
+        ...(fs.existsSync(noConsolePreload) && !/\s/.test(noConsolePreload)
+          ? { NODE_OPTIONS: '--require=' + noConsolePreload } : {})
+      });
       child = spawn(nodeExe(), [harnessBin(), '--profile', 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], {
         cwd: wsDir,
         env: harnessEnv,
@@ -779,18 +820,14 @@ async function ensureMcpAutoSync() {
 }
 
 
-// 打包分发时内置的默认插件（首次启动自动安装；已安装则跳过，老用户升级不受影响）
-// 默认插件：随安装包离线预装（preloaded-plugins），开箱即用；用户卸载后写入禁用名单，
-// 下次启动不再强制装回（尊重用户自由卸载，避免内核更新后插件不适配时无法卸载）
+// 内置默认插件列表（仅用于前端“禁用”按钮与禁用管理页展示；启动时离线/联网补齐缺失的）
 const DEFAULT_PROFILE_PLUGINS = {
   '@anionex/dsh-vision-toolkit': '^0.1.6',
-  '@huanlin/dsh-plugin-better-sidebar-plugin-office': '^0.1.0',
   'dsh-anchored-standard': 'git+https://github.com/xiaobright/dsh-anchored-standard.git',
-  'dsh-at-file': 'git+https://github.com/omdsh-dev/dsh-at-file.git',
+  'dsh-at-file': 'github:omdsh-dev/dsh-at-file',
   'dsh-better-sidebar': '^0.13.1',
-  'dsh-digipet': 'https://github.com/swaylq/dsh-digipet/archive/refs/heads/main.tar.gz',
 };
-// 用户主动卸载的默认插件名单：卸载后不再自动装回，尊重"用户自由卸载"
+// 用户主动卸载的插件名单：卸载后不再自动装回，尊重"用户自由卸载"
 const DISABLED_MARKER = path.join(profileDir(), '.default-plugins-disabled.json');
 function readDisabledDefaults() {
   try { return readJsonSafe(DISABLED_MARKER) || {}; } catch { return {}; }
@@ -803,16 +840,39 @@ function markDefaultPluginDisabled(pkg) {
   const map = readDisabledDefaults();
   if (!map[pkg]) { map[pkg] = Date.now(); saveDisabledDefaults(map); }
 }
+// 恢复后跳过自动安装的默认插件名单：恢复只撤销禁用状态，不自动重新下载，
+// 直到用户从插件市场手动安装（安装后 node_modules 存在，自然不再触发装回）。
+const DEFAULT_SKIP_AUTO_MARKER = path.join(profileDir(), '.default-skip-auto.json');
+function readDefaultSkipAuto() {
+  try { return readJsonSafe(DEFAULT_SKIP_AUTO_MARKER) || {}; } catch { return {}; }
+}
+function saveDefaultSkipAuto(map) {
+  try { fs.writeFileSync(DEFAULT_SKIP_AUTO_MARKER, JSON.stringify(map, null, 2), 'utf8'); } catch {}
+}
+// 同步离线预装副本：安装/更新成功后把 node_modules 里的最新插件副本写回 preloaded-plugins
+function syncPreloadedCopy(name) {
+  if (typeof name !== 'string' || !name) return;
+  const preloaded = path.join(resourcesRoot(), 'preloaded-plugins');
+  if (!fs.existsSync(preloaded)) return;
+  const rel = name.split('/');
+  const src = path.join(profileDir(), 'node_modules', ...rel);
+  const dest = path.join(preloaded, ...rel);
+  if (!fs.existsSync(path.join(src, 'package.json'))) return;
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.cpSync(src, dest, { recursive: true, force: true });
+  appendLog(`[desktop] 已同步离线预装副本 ${name} 至最新\n`);
+}
 async function ensureDefaultPlugins() {
-  // 离线预装：安装包分发时附带 resources/preloaded-plugins（do-pack 打包时从
-  // profile 抓取的已装插件+依赖平铺副本）。存在该目录则直接复制，不再在线 pnpm。
+  // 离线预装：安装包分发时附带 resources/preloaded-plugins（打包时从
+  // profile 抓取的已装插件+依赖平铺副本）。存在该目录则直接复制，免联网。
   const preloaded = path.join(resourcesRoot(), 'preloaded-plugins');
   if (fs.existsSync(preloaded)) {
     let copied = 0;
     const fails = [];
     const disabled = readDisabledDefaults();
+    const skipAuto = readDefaultSkipAuto();
     for (const name of Object.keys(DEFAULT_PROFILE_PLUGINS)) {
-      if (disabled[name]) continue;
+      if (disabled[name] || skipAuto[name]) continue;
       const rel = name.split('/');
       const src = path.join(preloaded, ...rel);
       if (!fs.existsSync(src)) continue;
@@ -831,6 +891,7 @@ async function ensureDefaultPlugins() {
     if (copied || fails.length) { try { await verifyPluginAfterInstall(); } catch {} }
     return;
   }
+  // 无离线预装副本时：联网自动安装缺失的默认插件（用户可随时卸载，卸载后写入禁用名单不再装回）
   const manifest = readJsonSafe(path.join(profileDir(), 'package.json')) || {};
   const deps = manifest.dependencies || {};
   // 失败标记：安装失败的默认插件只尝试一次，后续启动跳过（避免每次启动都重跑
@@ -842,9 +903,10 @@ async function ensureDefaultPlugins() {
     try { fs.writeFileSync(FAILED_MARKER, JSON.stringify(failed, null, 2), 'utf8'); } catch {}
   };
   const disabled = readDisabledDefaults();
+  const skipAuto = readDefaultSkipAuto();
   const todo = [];
   for (const [name, spec] of Object.entries(DEFAULT_PROFILE_PLUGINS)) {
-    if (disabled[name]) continue;
+    if (disabled[name] || skipAuto[name]) continue;
     const installed = fs.existsSync(path.join(profileDir(), 'node_modules', name));
     if (!installed && !deps[name] && !failed[name]) todo.push([name, spec]);
   }
@@ -1208,6 +1270,7 @@ function listPlugins() {
   const manifest = readJsonSafe(path.join(profileDir(), 'package.json')) ?? {};
   pluginsCache = {
     dependencies: Object.keys(manifest.dependencies ?? {}),
+    deps: manifest.dependencies ?? {},
     bundles: manifest.dsh?.profile?.bundles ?? []
   };
   return pluginsCache;
@@ -1320,9 +1383,14 @@ async function pnpmEnv() {
   // 优先使用系统 pnpm（与 profile 现有 node_modules 的 store 版本一致），
   // 没有 pnpm 时回退到内置 pnpm 11（新机器首次安装走这条路径）。
   const hasSystemPnpm = await commandAvailable('pnpm');
-  return hasSystemPnpm
+  const env = hasSystemPnpm
     ? { ...process.env }
     : { ...process.env, PATH: runtimeDir() + path.delimiter + (process.env.PATH || '') };
+  const noConsolePreload = path.join(harnessDir(), 'lib', 'no-console-patch.cjs');
+  if (fs.existsSync(noConsolePreload) && !/\s/.test(noConsolePreload)) {
+    env.NODE_OPTIONS = [env.NODE_OPTIONS, '--require=' + noConsolePreload].filter(Boolean).join(' ');
+  }
+  return env;
 }
 // 插件任务在主进程独立运行：关闭设置窗口/页面不会取消任务；所有窗口关闭时延迟退出，任务完成后再退出。
 const pluginJobs = new Map();
@@ -1447,16 +1515,22 @@ async function verifyPluginAfterInstall() {
     return { ok: false, reason: '验证异常：' + String(e && e.message || e) };
   }
 }
-// 回滚：卸载插件 + 移除 bundle + 恢复 harness
-async function rollbackPluginInstall(pkg, name, job) {
+// 回滚：更新失败时恢复原版本（npm 源）；新装失败时卸载插件 + 移除 bundle + 恢复 harness
+async function rollbackPluginInstall(pkg, name, job, restoreVersion) {
   const parts = [];
   try {
     if (name) syncBundleAfterUninstall(name, { ok: true });
     const env = await pnpmEnv();
-    const rm = await runPluginChild('remove', name || pkg, env, 300000, [], job);
-    parts.push(rm.ok ? '已卸载' : '卸载失败：' + String(rm.log || '').slice(-200));
+    // 更新场景（原版本已知）：恢复到更新前的版本，而不是卸载整个插件
+    if (restoreVersion) {
+      const rv = await runPluginChild('add', `${name}@${restoreVersion}`, env, 300000, [], job);
+      parts.push(rv.ok ? `已恢复原版本 ${restoreVersion}` : '恢复原版本失败：' + String(rv.log || '').slice(-200));
+    } else {
+      const rm = await runPluginChild('remove', name || pkg, env, 300000, [], job);
+      parts.push(rm.ok ? '已卸载' : '卸载失败：' + String(rm.log || '').slice(-200));
+    }
   } catch (e) {
-    parts.push('卸载异常：' + String(e && e.message || e));
+    parts.push('回滚异常：' + String(e && e.message || e));
   }
   try {
     const reload = await reloadHarness({ soft: true, overlay: false, msg: '已恢复服务…' });
@@ -1470,6 +1544,23 @@ function installPlugin(pkg) {
   }
   return trackPluginJob('add', pkg, async (job) => {
     try {
+      // 更新场景：记录安装前的原版本，验证失败时恢复到该版本（而非卸载整个插件）
+      const preInstalled = (() => {
+        try {
+          const nm = path.join(profileDir(), 'node_modules');
+          const candidates = [];
+          if (pkg.startsWith('@') && pkg.includes('/')) candidates.push(path.join(nm, ...pkg.split('/')));
+          else candidates.push(path.join(nm, pkg));
+          for (const c of candidates) {
+            const mf = path.join(c, 'package.json');
+            if (fs.existsSync(mf)) {
+              const m = JSON.parse(fs.readFileSync(mf, 'utf8'));
+              if (m && m.version) return m.version;
+            }
+          }
+          return null;
+        } catch { return null; }
+      })();
       let result = await runPluginChild('add', pkg, await pnpmEnv(), 300000, [], job);
       if (!result.ok) {
         // 常规安装失败（如网络/registry 问题）：自动升级为 AI 安装（诊断 → 白名单修复 → 重试）
@@ -1483,22 +1574,26 @@ function installPlugin(pkg) {
       // 装后验证：重启 harness 确认插件能加载，失败自动回滚
       const verify = await verifyPluginAfterInstall();
       if (!verify.ok) {
-        // 插件不兼容（能装但加载失败）：回滚后直接明确返回失败，不再自动 AI 诊断
-        // （这是插件自身兼容问题，AI 修复无意义，重复尝试只会让面板一直"安装中"让用户困惑）
+        // 插件不兼容（能装但加载失败）：回滚到原版本（更新场景）或卸载（新装场景）
         if (job) job.stage = '回滚中（插件不兼容）…';
-        const rollback = await rollbackPluginInstall(pkg, name, job);
+        const rollback = await rollbackPluginInstall(pkg, name, job, preInstalled);
         const msg = `插件已安装但加载失败：${verify.reason}\n已自动回滚：${rollback}\n\n提示：该插件与当前内核（${bundledVersion()}）不兼容，可尝试其他版本或等待插件更新。`;
         appendLog('[desktop] 插件加载失败已回滚，不再重试：' + verify.reason + '\n');
         return { ok: false, log: String(result.log || '') + '\n\n⚠ ' + msg, rolledBack: true };
       }
       result.log = String(result.log || '') + '\n（插件加载验证通过）';
+      // 同步离线预装副本：更新/安装成功后把插件最新副本写回 preloaded-plugins，
+      // 之后即使禁用再恢复，恢复用的也是最新版本
+      try { syncPreloadedCopy(name); } catch {}
+      // 失效更新检测缓存：更新/安装后重新检测，避免旧缓存仍显示“有更新”
+      pluginUpdateCache = null;
       return result;
     } catch (err) {
-      // 兜底：异常时依赖可能已写入 profile，尝试回滚，避免残留导致下次启动崩溃
+      // 兜底：异常时依赖可能已写入 profile，尝试回滚（更新场景恢复原版本），避免残留导致下次启动崩溃
       let rb = '';
       try {
         const name = isNpmPkgName(pkg) ? pkg : installedNameForSpec(pkg);
-        rb = await rollbackPluginInstall(pkg, name, job);
+        rb = await rollbackPluginInstall(pkg, name, job, preInstalled);
       } catch {}
       const msg = '安装异常：' + String(err && err.message || err) + (rb ? '\n已自动回滚：' + rb : '');
       // 异常兜底：异常多为代码缺陷，重试无意义，直接返回失败（含清理状态）
@@ -1581,13 +1676,15 @@ function uninstallPlugin(pkg, force) {
       }
       reloadHarness({ soft: true, msg: '正在恢复服务…' }).catch(() => {});
     }
-    if (result.ok) {
-      const r = syncBundleAfterUninstall(pkg, result);
-      markDefaultPluginDisabled(pkg);
-      // 统一热更新：卸载成功后软刷新让移除生效
-      await reloadHarness({ soft: true, msg: '插件已卸载，正在生效…' }).catch(() => {});
-      return r;
-    }
+if (result.ok) {
+          const r = syncBundleAfterUninstall(pkg, result);
+          markDefaultPluginDisabled(pkg);
+          // 失效更新检测缓存：卸载后重新检测，避免旧缓存仍显示“有更新”
+          pluginUpdateCache = null;
+          // 统一热更新：卸载成功后软刷新让移除生效
+          await reloadHarness({ soft: true, msg: '插件已卸载，正在生效…' }).catch(() => {});
+          return r;
+        }
     return result;
   });
 }
@@ -3222,14 +3319,19 @@ async function npmLatestVersion(name) {
 async function githubLatestRef(owner, repo) {
   if (!owner || !repo) return null;
   const repoClean = repo.replace(/\.git$/, '');
-  try {
-    const tagData = await fetchJson('https://api.github.com/repos/' + owner + '/' + repoClean + '/releases/latest');
-    if (tagData && tagData.tag_name) return { kind: 'tag', value: tagData.tag_name };
-  } catch {}
-  try {
-    const commits = await fetchJson('https://api.github.com/repos/' + owner + '/' + repoClean + '/commits?per_page=1');
-    if (Array.isArray(commits) && commits[0] && commits[0].sha) return { kind: 'commit', value: commits[0].sha.slice(0, 7) };
-  } catch {}
+  // 快速超时：GitHub 不可达时 6 秒内失败，避免串行拖慢整轮更新检查
+  const withTimeout = (p, ms = 6000) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
+  // 优先 GitHub Atom feed（网页级，不受未认证 API 60 次/小时限额限制）
+  for (const feed of ['releases.atom', 'tags.atom']) {
+    try {
+      const text = await withTimeout(fetchText('https://github.com/' + owner + '/' + repoClean + '/' + feed));
+      if (!text) continue;
+      const titles = (String(text).match(/<title>([^<]+)<\/title>/gi) || [])
+        .map((t) => t.replace(/<\/?title>/gi, '').trim())
+        .filter((t) => t && !/^(?:releases?|tags)\s+(?:notes\s+)?from/i.test(t));
+      if (titles[0]) return { kind: 'tag', value: titles[0] };
+    } catch {}
+  }
   return null;
 }
 // 更新已安装插件：按 dependencies 里记录的源重新安装（git commit 源会拉到最新），跳过本地链接插件
@@ -3238,7 +3340,10 @@ async function pluginUpdate(name) {
   const spec = (manifest.dependencies || {})[name];
   if (!spec) return { ok: false, log: `未找到已安装依赖：${name}` };
   if (spec.startsWith('link:')) return { ok: false, log: `${name} 是本地链接插件，无法自动更新` };
-  return installPlugin(spec);
+  // npm semver range（^0.13.1 / ~0.13.1 / 0.13.1 / >=x）→ 用纯包名重装拉最新；
+  // git+https / git+ssh / https:// / github: 源 → 用原 spec 重装拉最新
+  const isNpmRange = !spec.includes('://') && !spec.startsWith('github:');
+  return installPlugin(isNpmRange ? name : spec);
 }
 async function checkPluginUpdates() {
   const manifest = readJsonSafe(path.join(profileDir(), 'package.json')) || {};
@@ -3253,9 +3358,10 @@ async function checkPluginUpdates() {
       entry.installedVersion = installed && installed.version ? installed.version : null;
       if (spec.startsWith('link:')) {
         entry.source = 'link'; entry.msg = '本地链接，跳过'; entry.updateAvailable = false;
-      } else if (spec.startsWith('git+https://github.com/')) {
-        entry.source = 'git';
-        const m = spec.match(/git\+https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      } else if (spec.startsWith('github:')) {
+        // github:owner/repo（可带 #分支）源
+        entry.source = 'github';
+        const m = spec.match(/^github:([^/#]+)\/([^/#]+?)(?:\.git)?$/);
         const ref = await githubLatestRef(m ? m[1] : null, m ? m[2] : null);
         if (ref) {
           entry.latestVersion = ref.value;
@@ -3271,6 +3377,17 @@ async function checkPluginUpdates() {
           entry.latestVersion = ref.value;
           entry.updateAvailable = ref.kind === 'tag' ? semanticCompare(ref.value.replace(/^v/, ''), (entry.installedVersion || '').replace(/^v/, '')) > 0 : true;
           entry.msg = 'GitHub 归档来源';
+        } else entry.msg = 'GitHub 查询失败';
+      } else if (/^(git\+https:\/\/|git\+ssh:\/\/|https:\/\/github\.com\/)/.test(spec)) {
+        // 其他 GitHub git 源：git+https、git+ssh、https://github.com/.../x.git（archive 已在上方单独处理）
+        entry.source = 'git';
+        const m = spec.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+        const ref = await githubLatestRef(m ? m[1] : null, m ? m[2] : null);
+        if (ref) {
+          entry.latestVersion = ref.value;
+          const cur = entry.installedVersion || '';
+          entry.updateAvailable = ref.kind === 'commit' ? !cur.includes(ref.value) : semanticCompare(ref.value.replace(/^v/, ''), cur.replace(/^v/, '')) > 0;
+          entry.msg = ref.kind === 'tag' ? 'GitHub 最新 tag' : 'GitHub 最新 commit';
         } else entry.msg = 'GitHub 查询失败';
       } else {
         entry.source = 'npm';
@@ -3333,13 +3450,56 @@ ipcMain.handle('dsh:disabled-defaults-add', (_e, pkg) => {
   if (typeof pkg === 'string' && pkg) markDefaultPluginDisabled(pkg);
   return { ok: true };
 });
-ipcMain.handle('dsh:disabled-defaults-restore', (_e, pkg) => {
+ipcMain.handle('dsh:disabled-defaults-restore', async (_e, pkg) => {
   if (typeof pkg === 'string' && pkg) {
     const map = readDisabledDefaults();
     if (Object.prototype.hasOwnProperty.call(map, pkg)) {
       delete map[pkg];
       saveDisabledDefaults(map);
     }
+    // 恢复 = 撤销禁用 + 若 preloaded-plugins 内有该插件的离线副本则直接恢复安装（免联网）；
+    // 不在 preloaded 内的仅撤销禁用（保留跳过自动安装，需在插件市场手动安装）
+    const skip = readDefaultSkipAuto();
+    if (DEFAULT_PROFILE_PLUGINS[pkg]) {
+      const preloaded = path.join(resourcesRoot(), 'preloaded-plugins');
+      const rel = pkg.split('/');
+      const src = path.join(preloaded, ...rel);
+      if (fs.existsSync(preloaded) && fs.existsSync(src)) {
+        const dest = path.join(profileDir(), 'node_modules', ...rel);
+        try {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.cpSync(src, dest, { recursive: true, force: true });
+          // 同步写入 dependencies（用内置 spec），保证更新检测/卸载/禁用等后续功能全部可用
+          const manifestPath = path.join(profileDir(), 'package.json');
+          const manifest = readJsonSafe(manifestPath) || {};
+          const spec = DEFAULT_PROFILE_PLUGINS[pkg];
+          if (spec && !(manifest.dependencies || {})[pkg]) {
+            manifest.dependencies = manifest.dependencies || {};
+            manifest.dependencies[pkg] = spec;
+            try { fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8'); } catch {}
+          }
+          if (skip[pkg]) { delete skip[pkg]; saveDefaultSkipAuto(skip); }
+          appendLog(`[desktop] 已恢复离线预装插件 ${pkg}（免联网）\n`);
+          try { await verifyPluginAfterInstall(); } catch {}
+          return { ok: true, restored: true, source: 'preloaded' };
+        } catch (e) {
+          appendLog(`[desktop] 恢复离线预装插件 ${pkg} 失败：${String(e && e.message || e)}\n`);
+          return { ok: false, msg: String(e && e.message || e) };
+        }
+      }
+    }
+    // 无离线副本的预装插件：联网恢复安装（用内置 spec 走完整安装流程：安装 + 验证 + 失败回滚）
+    const spec = DEFAULT_PROFILE_PLUGINS[pkg];
+    if (spec) {
+      const r = await installPlugin(spec);
+      if (r && r.ok) {
+        if (skip[pkg]) { delete skip[pkg]; saveDefaultSkipAuto(skip); }
+        return { ok: true, restored: true, source: 'online', log: r.log };
+      }
+      return { ok: false, msg: '恢复安装失败：' + String(r && r.log || '').slice(-300) };
+    }
+    // 非预装插件：仅撤销禁用（保留跳过自动安装标记），用户可在插件市场手动安装
+    if (!skip[pkg]) { skip[pkg] = Date.now(); saveDefaultSkipAuto(skip); }
   }
   return { ok: true };
 });
@@ -3393,8 +3553,17 @@ ipcMain.handle('dsh:update-download', async (_e, downloadUrl) => {
   }
 });
 ipcMain.handle('dsh:plugin-update-check', async () => {
-  try { return { ok: true, ...(pluginUpdateStatus() || (await checkPluginUpdates())) }; }
-  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  try {
+    const cached = pluginUpdateStatus();
+    if (cached) return { ok: true, ...cached };
+    // 缓存未就绪：不阻塞等待完整检查（git 源可能数秒级），立即返回“检查中”，
+    // 同时后台跑一次检查写入缓存，前端稍后自动重试拿到结果
+    if (!pluginUpdateCache) {
+      checkPluginUpdates().then((d) => { pluginUpdateCache = { at: Date.now(), value: d }; })
+        .catch((e) => appendLog('[desktop] 插件更新检查失败：' + (e && e.message || e) + '\n'));
+    }
+    return { ok: true, pending: true, checkedAt: null, total: 0, updates: [], results: [] };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });
 ipcMain.handle('dsh:plugin-update', async (_e, name) => {
   if (typeof name !== 'string' || !name.trim()) return { ok: false, log: '缺少插件名' };
@@ -3618,6 +3787,8 @@ if (!gotLock) {
     if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
   });
   app.whenReady().then(async () => {
+  // no-console-patch self-heal: restore patch after kernel/plugin updates
+  try { ensureNoConsolePatch(); } catch (err) { appendLog('no-console-patch ensure: ' + (err && err.message || err) + '\n'); }
     // 不显示原生菜单栏：设置入口都在 Web 界面自带的设置页与启动页里
     Menu.setApplicationMenu(null);
     // 内核版本变化时强制冷启动：清除驻留缓存，避免复用旧内核进程导致功能错乱
@@ -3628,15 +3799,14 @@ if (!gotLock) {
     createWindow({ firstRun });
     createTray();
     dshStartupTime = Date.now(); // 记录启动时间，供空会话清理判断
-    // 插件定期更新检查：启动 15 秒后后台检查一次，之后每 24 小时自动检查（仅提示，不自动安装）
-    setTimeout(() => { checkPluginUpdates().then((d) => { pluginUpdateCache = { at: Date.now(), value: d }; appendLog('[desktop] 插件更新检查完成：' + d.updates.length + ' 个可更新，共 ' + d.total + ' 个\n'); }).catch((e) => appendLog('[desktop] 插件更新检查失败：' + (e && e.message || e) + '\n')); }, 15000);
+    // 插件定期更新检查：启动 5 秒后后台检查一次，之后每 24 小时自动检查（仅提示，不自动安装）
+    setTimeout(() => { checkPluginUpdates().then((d) => { pluginUpdateCache = { at: Date.now(), value: d }; appendLog('[desktop] 插件更新检查完成：' + d.updates.length + ' 个可更新，共 ' + d.total + ' 个\n'); }).catch((e) => appendLog('[desktop] 插件更新检查失败：' + (e && e.message || e) + '\n')); }, 5000);
     setInterval(() => { checkPluginUpdates().then((d) => { pluginUpdateCache = { at: Date.now(), value: d }; appendLog('[desktop] 插件更新检查完成：' + d.updates.length + ' 个可更新，共 ' + d.total + ' 个\n'); }).catch(() => {}); }, 24 * 60 * 60 * 1000);
     // 并行准备：探测外部 dsh web 服务 + 确保桌面设置插件就位，避免串行等待拖慢启动。
     // 后台预热会话列表缓存：设置页“对话回滚/删除对话”打开时直接可用，避免同步扫描卡住主进程
     const existingWebPromise = findExistingDshWeb();
     try { await ensureDesktopPlugin(); } catch (err) { appendLog(`[desktop] ensure plugin: ${err}\n`); }
-    // 默认插件安装延迟到 harness 就绪后（20s）再执行：避免与 harness 冷启动并行跑
-    // pnpm 安装抢 CPU，导致加载环境时窗口长时间无响应/未响应
+    // 默认插件离线预装延迟到 harness 就绪后（20s）再执行：避免与 harness 冷启动并行复制抢 CPU
     setTimeout(() => { ensureDefaultPlugins().catch((err) => appendLog(`[desktop] ensure default plugins: ${err && err.message || err}\n`)); }, 20000);
     // 后台执行：类似 Claude Code 从 ~/.claude.json 检测 MCP 并同步（等待 harness 就绪后再改 patch + 热重载）
     setTimeout(() => { ensureMcpAutoSync().catch((err) => appendLog(`[desktop] MCP 检测: ${err && err.message || err}\n`)); }, 8000);

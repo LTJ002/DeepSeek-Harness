@@ -1,0 +1,36 @@
+// ---------- no-console-patch 自愈 ----------
+// 统一解决 Windows 下子进程（git/pnpm/rg/node 等）弹出黑色控制台窗口的问题。
+// 原理：hook child_process 全部 spawn 变体，自动补 windowsHide:true。
+// 内核/插件更新会覆盖 harness\lib\bin.js 与 no-console-patch.cjs，
+// 本函数在每次应用启动时检查并自动恢复，无需手动干预。
+const NO_CONSOLE_PATCH_B64 = '__B64__';
+function ensureNoConsolePatch() {
+  try {
+    const libDir = path.join(harnessDir(), 'lib');
+    const patchFile = path.join(libDir, 'no-console-patch.cjs');
+    const binFile = path.join(libDir, 'bin.js');
+    fs.mkdirSync(libDir, { recursive: true });
+    const wantPatch = Buffer.from(NO_CONSOLE_PATCH_B64, 'base64').toString('utf8');
+    if (!fs.existsSync(patchFile)) {
+      fs.writeFileSync(patchFile, wantPatch, 'utf8');
+    } else if (
+      /CreateProcessAsUserW/.test(wantPatch) &&
+      !fs.readFileSync(patchFile, 'utf8').includes('CreateProcessAsUserW')
+    ) {
+      fs.writeFileSync(patchFile, wantPatch, 'utf8');
+      appendLog('[desktop] no-console-patch 已升级到 koffi 修复版（v0.2）\n');
+    }
+    if (fs.existsSync(binFile)) {
+      let content = fs.readFileSync(binFile, 'utf8');
+      if (!content.includes('no-console-patch')) {
+        const hasBom = content.charCodeAt(0) === 0xFEFF;
+        const body = hasBom ? content.slice(1) : content;
+        const patched = body.replace(/^#!\/usr\/bin\/env node(\r?\n)/, '#!\/usr\/bin\/env node$1import "./no-console-patch.cjs";$1');
+        fs.writeFileSync(binFile, (hasBom ? '\uFEFF' : '') + patched, 'utf8');
+        appendLog('[desktop] no-console-patch 已注入 bin.js\n');
+      }
+    }
+  } catch (err) {
+    appendLog(`[desktop] no-console-patch self-heal failed: ${err && err.message || err}\n`);
+  }
+}

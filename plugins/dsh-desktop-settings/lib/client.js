@@ -156,6 +156,17 @@ window.__ModuleLoader__.load({
       return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     }
 
+    // 已安装依赖的仓库网页：GitHub 各源（github: / git+https / git+ssh / archive 直链）跳 GitHub，
+    // npm 源跳 npmjs 包页；link: 本地链接无网页返回 null
+    function depHomepage(d, deps) {
+      const spec = (deps || {})[d] || "";
+      let m;
+      if (/^link:/.test(spec)) return null;
+      if ((m = /github\.com\/([^/]+)\/([^/#]+)/.exec(spec))) return "https://github.com/" + m[1] + "/" + m[2].replace(/\.git$/, "");
+      if ((m = /^github:([^/#]+)\/([^/#]+)/.exec(spec))) return "https://github.com/" + m[1] + "/" + m[2].replace(/\.git$/, "");
+      return "https://www.npmjs.com/package/" + encodeURIComponent(d);
+    }
+
     // “侧边卡片”设置里的功能卡片（资源管理器/终端等）：启用态用黑白灰主题的强选中态，
     // 黑边框 + 深灰底 + 左侧黑色竖条 + 反黑图标块，一眼可辨且不与整体配色冲突。
     function installSideCardStyle() {
@@ -503,9 +514,20 @@ const [lastFailed, setLastFailed] = useState(null);
         const api2 = window.dshDesktop;
         if (!api2 || typeof api2.pluginUpdateCheck !== 'function') return;
         let alive = true;
-        api2.pluginUpdateCheck().then((r) => {
-          if (alive && r && r.ok && Array.isArray(r.updates)) setPluginUpdates(r);
-        }).catch(() => {});
+        let retries = 0;
+        const doCheck = () => {
+          api2.pluginUpdateCheck().then((r) => {
+            if (!alive) return;
+            // 检查中（缓存未就绪）：稍后自动重试，最多 3 次
+            if (r && r.ok && r.pending && retries < 3) {
+              retries++;
+              setTimeout(doCheck, 8000);
+              return;
+            }
+            if (r && r.ok && Array.isArray(r.updates)) setPluginUpdates(r);
+          }).catch(() => {});
+        };
+        doCheck();
         return () => { alive = false; };
       }, []);
       // 禁用名单：用户主动禁用的默认插件（卸载后不再自动装回），可在此查看与恢复
@@ -738,13 +760,22 @@ const [lastFailed, setLastFailed] = useState(null);
         }
         refresh();
       }
-      // 恢复默认插件：从禁用名单移除（下次启动自动重新安装）
+      // 恢复默认插件：撤销禁用并重新安装（preloaded 有副本免联网复制，否则联网安装；非预装插件仅撤销禁用）
       async function restoreDefaultPlugin(dep) {
-        if (!window.confirm(`恢复 ${dep}？\n将从禁用名单移除，下次启动会自动重新安装。`)) return;
+        if (!window.confirm(`恢复 ${dep}？\n将从禁用名单移除并重新安装（有离线副本免联网，否则联网安装）。`)) return;
         try {
-          if (api.disabledDefaultsRestore) await api.disabledDefaultsRestore(dep);
-          setDisabledDefaults((prev) => { const n = { ...prev }; delete n[dep]; return n; });
-          setInstallLog((l) => l + `\n✔ 已恢复 ${dep}（下次启动自动安装）`);
+          const r = api.disabledDefaultsRestore ? await api.disabledDefaultsRestore(dep) : null;
+          if (r && r.ok && r.restored) {
+            setDisabledDefaults((prev) => { const n = { ...prev }; delete n[dep]; return n; });
+            setInstallLog((l) => l + (r.source === 'preloaded'
+              ? `\n✔ 已恢复 ${dep} 并重新安装（离线副本，免联网）`
+              : `\n✔ 已恢复 ${dep} 并重新安装（联网安装）`));
+          } else if (r && !r.ok) {
+            setInstallLog((l) => l + `\n✖ 恢复 ${dep} 失败：${r.msg || "未知错误"}（已从禁用名单移除，可在插件市场重试安装）`);
+          } else {
+            setDisabledDefaults((prev) => { const n = { ...prev }; delete n[dep]; return n; });
+            setInstallLog((l) => l + `\n✔ 已恢复 ${dep}（已从禁用名单移除，可在插件市场自行安装）`);
+          }
         } catch (e) {
           setInstallLog((l) => l + "\n✖ " + String(e && e.message || e));
         }
@@ -787,7 +818,20 @@ const [lastFailed, setLastFailed] = useState(null);
           setInstalling(false);
         }
         refresh();
-        try { const r2 = await api.pluginUpdateCheck(); if (r2 && r2.ok) setPluginUpdates(r2); } catch {}
+        try { const r2 = await api.pluginUpdateCheck(); if (r2 && r2.ok && !r2.pending) setPluginUpdates(r2); } catch {}
+      }
+      // 一键更新全部可更新插件（串行逐个更新，每个都走安装覆盖 + 装后验证）
+      async function updateAllPlugins() {
+        if (installing) return;
+        const list = (pluginUpdates && Array.isArray(pluginUpdates.updates) ? pluginUpdates.updates : [])
+          .filter((u) => u.updateAvailable).map((u) => u.name);
+        if (!list.length) return;
+        if (!window.confirm(`更新全部 ${list.length} 个插件？\n将逐个更新：${list.join("、")}`)) return;
+        for (const name of list) {
+          await updatePlugin(name);
+        }
+        refresh();
+        try { const r2 = await api.pluginUpdateCheck(); if (r2 && r2.ok && !r2.pending) setPluginUpdates(r2); } catch {}
       }
       const pluginBusy = installing || pluginJobs.some((job) => job.status === "running");
       const tabs = [["market", t("插件市场")], ["mcp", t("MCP 服务器")], ["plugins", t("已安装插件")], ["disabled", t("禁用")]];
@@ -799,6 +843,7 @@ const [lastFailed, setLastFailed] = useState(null);
         pluginUpdates && Array.isArray(pluginUpdates.updates) && pluginUpdates.updates.length > 0 && jsx("div", { style: S.card, children: [
           jsx("div", { style: { ...S.row, flexWrap: "nowrap", alignItems: "center" }, children: [
             jsx("span", { style: { ...S.h2, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: t("有 {n} 个插件可更新", { n: pluginUpdates.updates.length }) }),
+            jsx("button", { style: { ...S.btnSmall, flexShrink: 0, color: "#2563eb", fontWeight: 600 }, disabled: pluginBusy, onClick: updateAllPlugins, children: pluginBusy ? t("任务进行中…") : t("全部更新") }),
             jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, onClick: () => { const a3 = window.dshDesktop; if (a3 && a3.pluginUpdateCheck) a3.pluginUpdateCheck().then((r) => { if (r && r.ok) setPluginUpdates(r); }).catch(() => {}); }, children: t("重新检查") })
           ] }),
           ...pluginUpdates.updates.map((u) => jsx("div", { key: u.name, style: S.li, children: [
@@ -869,12 +914,29 @@ const [lastFailed, setLastFailed] = useState(null);
                     const status = busy[it.repo];
                     const repoName = it.repo.split("/")[1];
                     const explicitName = (/npm\s+包名\s*[`：:]\s*([^\s`，。]+)/.exec(it.desc || "") || [])[1];
-                    const installed = plugins.dependencies.includes(repoName) ||
-                      plugins.dependencies.includes(explicitName) ||
-                      plugins.bundles.includes(repoName) ||
-                      plugins.bundles.includes(explicitName);
-                    const installedName = (plugins.dependencies.includes(repoName) || plugins.bundles.includes(repoName)) ? repoName : explicitName;
+                    // 归一化：去 @ 前缀 + 小写，处理 GitHub 标签与 npm 包名大小写/前缀差异（Anionex/dsh-vision-toolkit ↔ @anionex/dsh-vision-toolkit）
+                    const norm = (s) => String(s || "").replace(/^@/, "").toLowerCase();
+                    const depNames = [...plugins.dependencies, ...plugins.bundles];
+                    const findDep = (label) => {
+                      if (!label) return null;
+                      if (depNames.includes(label)) return label;
+                      const t = norm(label);
+                      return depNames.find((d) => norm(d) === t) || null;
+                    };
+                    const installedDep = findDep(it.repo) || findDep(repoName) || findDep(explicitName);
+                    const installed = !!installedDep;
+                    const installedName = installedDep;
                     const canUpdate = installed && installedName && updatable.has(installedName);
+                    // 默认插件禁用名单匹配（恢复后不自动重装，市场按钮显示“恢复”）
+                    const findDisabled = (label) => {
+                      if (!label) return null;
+                      if (Object.prototype.hasOwnProperty.call(disabledDefaults, label)) return label;
+                      const t = norm(label);
+                      return Object.keys(disabledDefaults).find((k) => norm(k) === t) || null;
+                    };
+                    const disabledDep = findDisabled(it.repo) || findDisabled(repoName) || findDisabled(explicitName);
+                    const marketDisabledDep = marketDisabled[it.repo];
+                    const defaultDisabled = !!disabledDep;
                     return jsx("div", { key: it.repo, style: S.card, children: [
                       jsx("div", { style: S.row, children: [
                         jsx("span", { style: S.name, children: esc(it.repo) }),
@@ -884,8 +946,8 @@ const [lastFailed, setLastFailed] = useState(null);
                           ? (canUpdate
                             ? jsx("button", { style: S.btnSmall, disabled: pluginBusy || !!status, onClick: () => updatePlugin(installedName), children: status || (pluginBusy ? t("任务进行中…") : t("更新")) })
                             : jsx("span", { style: S.badge(""), children: t("已安装") }))
-                          : marketDisabled[it.repo]
-                            ? jsx("button", { style: { ...S.btnSmall, color: "#b45309" }, disabled: pluginBusy, onClick: () => enableMarketPlugin(it.repo), children: t("恢复") })
+                          : (marketDisabledDep || defaultDisabled)
+                            ? jsx("span", { style: S.badge("warn"), children: t("已禁用") })
                             : jsx("div", { style: { display: "flex", gap: 6, alignItems: "center" }, children: [
                                 jsx("button", { style: S.btnSmall, disabled: pluginBusy || !!status, onClick: () => installRepo(it.repo, it.desc), children: status || (pluginBusy ? t("任务进行中…") : t("安装")) }),
                                 jsx("button", { style: { ...S.btnSmall, color: "#b45309" }, disabled: pluginBusy, onClick: () => disableMarketPlugin(it.repo), children: t("禁用") })
@@ -920,15 +982,20 @@ const [lastFailed, setLastFailed] = useState(null);
         tab === "plugins" && jsx("div", { children: [
           jsx("div", { style: S.cat, children: t("已安装依赖") }),
           plugins.dependencies.length
-            ? plugins.dependencies.map((d) => jsx("div", { key: d, style: S.li, children: [
-                jsx("span", { style: S.liName, children: esc(d) }),
+            ? plugins.dependencies.map((d) => {
+                const home = depHomepage(d, plugins.deps);
+                return jsx("div", { key: d, style: S.li, children: [
+                home
+                  ? jsx("a", { href: home, target: "_blank", rel: "noopener", title: home, style: { ...S.liName, color: "#2563eb", textDecoration: "underline" }, children: esc(d) })
+                  : jsx("span", { style: S.liName, children: esc(d) }),
                 jsx("div", { style: { ...S.row, flexWrap: "nowrap" }, children: [
                 jsx("span", { style: { ...S.sub, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: t("依赖") }),
-                updatable.has(d) && jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: pluginBusy, onClick: () => updatePlugin(d), children: pluginBusy ? t("任务进行中…") : t("更新") }),
+                updatable.has(d) && jsx("button", { style: { ...S.btnSmall, flexShrink: 0, color: "#2563eb", fontWeight: 600 }, disabled: pluginBusy, onClick: () => updatePlugin(d), children: pluginBusy ? t("任务进行中…") : t("更新") }),
                 jsx("button", { style: { ...S.btnSmall, flexShrink: 0 }, disabled: pluginBusy, onClick: () => uninstallPkg(d), children: uninstallingPkg === d ? "卸载中…" : t("卸载") }),
                 defaultPlugins.includes(d) && !disabledDefaults[d] && jsx("button", { style: { ...S.btnSmall, flexShrink: 0, color: "#b45309" }, disabled: pluginBusy, onClick: () => disableDefaultPlugin(d), children: t("禁用") })
               ] })
-              ] }))
+              ] });
+            })
             : jsx("div", { style: S.empty, children: t("无") }),
           jsx("div", { style: S.cat, children: t("已启用的 Bundle 层") }),
           plugins.bundles.length ? plugins.bundles.map((b) => jsx("div", { key: b, style: S.li, children: [
@@ -1392,6 +1459,25 @@ const [lastFailed, setLastFailed] = useState(null);
 
     const CHANGELOG = [
       {
+        version: "0.1.4",
+        date: "2026-08-22",
+        items: [
+          "插件更新检测多来源支持：github: / git+ssh / git+https / tar.gz 归档全部可检测（此前 github: 源误判为 npm 查询失败）；GitHub 改用 Atom feed 检测，不再受 API 限流 403 影响",
+          "插件更新按钮修复：preload 补齐 pluginUpdateCheck 桥接，检测结果正常推送前端（此前按钮永不显示）；git 源检测 6 秒快速超时、检查中自动重试、首次检查提前至启动 5 秒",
+          "新增「全部更新」按钮：可更新卡片上一键串行更新全部插件（单个更新仍在已安装页）",
+          "更新失败回滚优化：更新插件失败时恢复更新前的原版本（此前直接卸载整个插件）；新装失败仍为卸载清理",
+          "插件市场已安装识别修复：GitHub 标签与 npm 包名大小写/前缀差异（Anionex/dsh-vision-toolkit ↔ @anionex/dsh-vision-toolkit）归一化匹配，已安装正确显示「已安装」",
+          "禁用管理优化：恢复仅撤销禁用状态、不再自动重新下载；市场被禁用插件显示「已禁用」，恢复统一在「禁用」页",
+          "已安装页依赖名可点击：GitHub 源跳仓库、npm 源跳 npmjs 包页",
+          "移除「软件更新」页冗余的视觉 API 密钥入口——视觉工具自带设置页完整配置（API 地址/模型/密钥保存）",
+          "打包/部署一致性：打包流程固化 no-console 补丁（黑窗口修复 + 启动自愈），源码打包→安装→启动与部署版逐字节一致",
+          "harness 内核与依赖对齐 0.1.1-rc.2（package.json/锁文件/node_modules 与部署版一致）；清理旧版残留（lib.rc6/嵌套目录）与冗余备份目录",
+          "版本号统一为 0.1.4（内置 asar 与 exe 元数据同步）",
+          "内核更新（0.1.1-rc.1）：DeepSeek 适配器新增多模态视觉模型 DeepSeek-V4-Flash-Vision-Exp；修复输入框 @ 引用前编辑的布局问题、Bubblewrap 沙箱受限进程可经 /proc/<pid>/root 绕过限制的漏洞；优化会话 Markdown 表格自适应、99.x% 缓存命中率精度显示、子代理会话标题切换；ask_user_question 支持多行输入与 Shift+Enter 换行",
+          "内核更新（0.1.1-rc.2）：DeepSeek 适配器优先通过 Files API 上传图像并可复用已上传文件；图像预处理按模型要求自动缩放并转换格式"
+        ]
+      },
+      {
         version: "0.1.3.1",
         date: "2026-08-21",
         items: [
@@ -1480,10 +1566,6 @@ const [lastFailed, setLastFailed] = useState(null);
     function UpdateSection({ t }) {
       const [updateText, setUpdateText] = useState("");
       const [checking, setChecking] = useState(false);
-      const [showKeyInput, setShowKeyInput] = useState(false);
-      const [apiKeyInput, setApiKeyInput] = useState("");
-      const [keyStatus, setKeyStatus] = useState("");
-      const [keyBusy, setKeyBusy] = useState(false);
       const [updateInfo, setUpdateInfo] = useState(null);
       const [downloading, setDownloading] = useState(false);
       const api = window.dshDesktop;
@@ -1516,37 +1598,15 @@ const [lastFailed, setLastFailed] = useState(null);
         } catch (e) { setUpdateText("更新失败：" + String(e && e.message || e)); }
         finally { setDownloading(false); }
       }
-      async function saveVisionKey() {
-        const kapi = window.dshDesktop;
-        if (!kapi || typeof kapi.visionConfigSaveKey !== 'function') { setKeyStatus("当前版本不支持直接保存（请重新打包后使用）"); return; }
-        if (!apiKeyInput.trim()) { setKeyStatus("请粘贴 API 密钥"); return; }
-        setKeyBusy(true); setKeyStatus("保存中…");
-        try {
-          const r = await kapi.visionConfigSaveKey({ credential: "VISION_API_KEY", apiKey: apiKeyInput.trim() });
-          if (r && r.ok) { setKeyStatus("已保存视觉模型 API 密钥（VISION_API_KEY）。"); }
-          else { setKeyStatus("保存失败：" + (r && r.msg ? r.msg : "未知错误")); }
-        } catch (e) { setKeyStatus("保存失败：" + String(e && e.message || e)); }
-        finally { setKeyBusy(false); }
-      }
 
       return jsx("div", { style: S.wrap, children: [
         jsx("div", { style: S.h2, children: t("软件更新") }),
         jsx("div", { style: S.sub, children: t("检查内置 Harness 是否有新版本可用。") }),
         jsx("div", { style: S.row, children: [
           jsx("button", { style: S.btn, disabled: checking, onClick: checkUpdate, children: checking ? t("查询中…") : t("检查更新") }),
-          jsx("button", { style: S.btn, onClick: () => setShowKeyInput((v) => !v), children: showKeyInput ? t("收起") : t("视觉 API 密钥") }),
           updateInfo && updateInfo.newer && updateInfo.downloadUrl && jsx("button", { style: S.btn, disabled: downloading, onClick: downloadUpdate, children: downloading ? "下载中…" : "下载并更新" })
         ] }),
         updateText && jsx("pre", { style: S.pre, children: updateText }),
-        showKeyInput && jsx("div", { style: S.card, children: [
-          jsx("div", { style: S.h2, children: t("视觉模型 API 密钥") }),
-          jsx("div", { style: S.desc, children: t("粘贴视觉模型 API 密钥并保存。若未配置，使用视觉工具时会提示。") }),
-          jsx("div", { style: { display: "flex", gap: 8, marginTop: 8, alignItems: "center" }, children: [
-            jsx("input", { style: S.input, type: "password", value: apiKeyInput, placeholder: "粘贴 API 密钥…", onChange: (e) => setApiKeyInput(e.target.value) }),
-            jsx("button", { style: S.btn, disabled: keyBusy, onClick: saveVisionKey, children: keyBusy ? t("保存中…") : t("保存") })
-          ] }),
-          keyStatus && jsx("div", { style: S.status, children: keyStatus })
-        ] }),
         jsx("div", { style: { ...S.card, maxHeight: 340, overflowY: "auto", paddingRight: 6 }, children: [
           jsx("div", { style: { ...S.cat, margin: 0, paddingBottom: 6 }, children: t("更新日志") }),
           ...CHANGELOG.map((v, idx) => jsx("div", { key: v.version, style: { padding: "8px 0", borderBottom: idx < CHANGELOG.length - 1 ? "1px solid rgba(128,128,128,.18)" : "none" }, children: [

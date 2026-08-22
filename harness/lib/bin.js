@@ -1,4 +1,5 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
+import "./no-console-patch.cjs";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadLayeredEnv } from "@deepseek-ai/dsh-app-boot";
