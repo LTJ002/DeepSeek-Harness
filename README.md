@@ -1,13 +1,13 @@
-# DeepSeek Harness Desktop
+﻿# DeepSeek Harness Desktop
 
 [English](README.md) | [中文](README.zh.md)
 
 ## Overview
 
-DeepSeek Harness Desktop (`dsh-desktop`) is a Windows desktop application built on the [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) kernel (`0.1.0-rc.8`). It wraps the `dsh web` Web UI into a native Electron shell.
+DeepSeek Harness Desktop (`dsh-desktop`) is a Windows desktop application built on the [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) kernel. It wraps the `dsh web` Web UI into a native Electron shell.
 
-- Double-click to launch: auto-starts the bundled `dsh web` server (`http://127.0.0.1:<random port>`) and opens the UI in a native window
-- Fully self-contained: bundles Electron 43 + Node.js 22.19 + the complete `@deepseek-ai/dsh@0.1.0-rc.8` package — no system Node.js required
+- Double-click to launch: auto-starts the bundled `dsh web` server and opens the UI in a native window
+- Fully self-contained: bundles Electron 43 + Node.js 22 + the complete `@deepseek-ai/dsh` package — no system Node.js required
 - Shares `~/.dsh` with the CLI version (profiles / sessions / storage all shared)
 - Default working directory: `%USERPROFILE%\DeepSeekHarness`
 
@@ -17,26 +17,28 @@ DeepSeek Harness Desktop (`dsh-desktop`) is a Windows desktop application built 
 
 | Feature | Description |
 | --- | --- |
-| MCP auto-detection | Scans MCP configs from Claude Desktop / Cursor / VS Code / Cline / Windsurf and syncs them into the desktop app |
-| Plugin market | Bundled pnpm — install/update plugins without extra setup; one-click update with auto repair or rollback on failure |
+| MCP auto-detection | Scans MCP configs and syncs them into the desktop app |
+| Plugin market | Bundled pnpm — install/update plugins without extra setup |
 | Update checker | Detects new releases from GitHub Releases and prompts download |
-| Conversation & file rollback | `/rewind` command, "Rollback to this message" on hover, double-press `Esc` with empty input |
-| Fullscreen | `F11` toggles fullscreen without hiding any controls |
-| Multimodal kernel (rc.8) | Native DeepSeek image requests, `/goal`/`/plan` image+text input, @-menu file and conversation references; Claude Code / Codex subagents as Profile Bundles; Windows PTY persistent PowerShell sessions |
-| Window auto-reconnect | Auto-reconnects to the new port after kernel restarts (10s debounce) — no more grey freeze, no manual restart |
-| Offline preloaded plugins | Default plugins bundled inside the package — offline fresh install, faster first launch; failed plugins are not reinstalled on every startup |
-| Log UX | Plugin install logs auto-collapse after 60s; "Clear log" buttons on the link/command install and installed tabs; binarised high-DPI tray icon |
+| Conversation & file rollback | `/rewind` command, "Rollback to this message", double-press `Esc` |
+| Fullscreen | `F11` toggles fullscreen |
+| Window auto-reconnect | Auto-reconnects after kernel restarts — no grey freeze |
+| Offline preloaded plugins | Default plugins bundled — offline fresh install |
+| No-console fix | Child processes (git/pnpm/node) never open visible console windows |
+| Log UX | Plugin install logs auto-collapse after 60s; one-click clear |
 
-### Bundled Default Plugins
+### Bundled Default Plugins (v0.1.4)
 
-Installed automatically on first launch (dsh-better-sidebar, dsh-at-file, dsh-token-usage and 8 more) — ready to use out of the box. Bundled inside the package (preloaded-plugins) for fully offline installs.
+`dsh-vision-toolkit` 0.1.38 · `dsh-anchored-standard` 0.1.0 · `dsh-at-file` 0.6.7 · `dsh-better-sidebar` 0.13.1
 
-## Installation
+## Installation (v0.1.4)
 
-| Artifact | Description |
-| --- | --- |
-| `DeepSeek Harness Setup 0.1.3.1.exe` | Installer: installs to a chosen directory, creates Start Menu / desktop shortcuts, adds Defender exclusion silently |
-| `DeepSeek Harness 0.1.3.1 Portable.exe` | Portable: extracts to `app\` beside the exe, instant relaunch; auto re-extracts when version mismatches (supports upgrades) |
+| Artifact | Description | Link |
+| --- | --- | --- |
+| DeepSeek Harness Setup 0.1.4.exe | Installer: chosen directory, shortcuts, silent Defender exclusion | [Download](https://github.com/LTJ002/DeepSeek-Harness/releases/download/v0.1.4/DeepSeek%20Harness%20Setup%200.1.4.exe) |
+| DeepSeek Harness 0.1.4 Portable.exe | Portable: green, extracts beside the exe, instant relaunch | [Download](https://github.com/LTJ002/DeepSeek-Harness/releases/download/v0.1.4/DeepSeek%20Harness%200.1.4%20Portable.exe) |
+
+> GitHub Release: https://github.com/LTJ002/DeepSeek-Harness/releases/tag/v0.1.4
 
 ### Portable Notes
 
@@ -51,53 +53,10 @@ Installed automatically on first launch (dsh-better-sidebar, dsh-at-file, dsh-to
 | `Esc` | Exit fullscreen |
 | Double-press `Esc` with empty input | Open "Conversation Rollback" in Web Settings |
 
-## Directory Structure
-
-```
-dsh-desktop/
-├── main.js             Electron main process (launches harness + loads URL + lifecycle)
-├── preload.js          Minimal desktop bridge for local pages (restart / log path)
-├── app/                Launch page and error pages
-├── harness/            Complete @deepseek-ai/dsh package (kernel, incl. node_modules)
-├── runtime/node.exe    Bundled Node 22.19 runtime
-├── build/
-│   ├── icon.ico        App icon
-│   ├── installer.nsi   NSIS installer script
-│   ├── portable.nsi    NSIS portable script
-│   └── tools/          Local packaging tools (NSIS, rcedit)
-└── dist/               Assembly and packaging output
-```
-
 ## Logs
 
 - Desktop app log: `%APPDATA%\DeepSeek Harness\harness.log`
 - Harness data: `~/.dsh`
-
-Startup optimization: `~/.dsh/desktop-running.json` is written on start and cleared on normal exit; a full session-log validation only runs on first launch or after an abnormal exit, keeping everyday startups fast.
-
-## Local Development
-
-```powershell
-npm install --ignore-scripts
-# First time: manually download the Electron runtime:
-# https://npmmirror.com/mirrors/electron/v43.4.0/electron-v43.4.0-win32-x64.zip
-# Extract to node_modules/electron/dist and write path.txt (content: electron.exe)
-npm start
-```
-
-## Repackaging (fully manual, no electron-builder)
-
-1. Assemble the app directory: copy `node_modules/electron/dist` + `harness/` + `runtime/` (node.exe, pnpm and pnpm.cmd), then package `resources/app.asar` with `@electron/asar`
-2. `build\rcedit-x64.exe` writes the exe icon/version info
-3. `build\tools\nsis\Bin\makensis.exe /DROOT=$root /V2 build\installer.nsi` (installer) / `build\portable.nsi` (portable)
-
-> Note: `d3dcompiler_47.dll` cannot be written to `dist\` under its original name in the packaging sandbox — it is staged as `dist\extra\d3dcompiler_47_new.dll` and restored via NSIS `/oname=d3dcompiler_47.dll` at install time.
-
-## FAQ
-
-- **Blue terminal window during install?** Fixed: the Defender exclusion script now runs silently (`-WindowStyle Hidden`) — no window on install or uninstall.
-- **Portable first launch is slow?** The first run extracts ~151 MB (30k+ files); subsequent launches are instant.
-- **No update detected?** The update source is GitHub Releases (`LTJ002/DeepSeek-Harness`) — new versions must be published there.
 
 ## License
 
