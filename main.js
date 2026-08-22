@@ -508,13 +508,26 @@ function showSoftOverlay(text) {
   } catch {}
 }
 // 探测一个 HTTP 地址是否仍然存活（用于复用驻留 harness）
+// 注意：必须与 probeDshUrl 同样严格（HTTP 200 且页面含 __DSH_BOOT__ 标记）。
+// 旧的 statusCode<500 判定会把“进程活着但 web UI 已挂（所有路由 404）”的
+// 坏 harness 当成健康复用，窗口加载 404 空页面即白屏——插件安装/更新失败
+// 后重启残留的坏进程正是走这条路径导致永久白屏。
 function probeUrl(url) {
+  return probeDshUrl(url);
+}
+// 终止占用指定本地端口的进程（尽力而为；仅用于清理已确认失效的驻留 harness）
+function killLocalPortOwner(port) {
   return new Promise((resolve) => {
+    let child = null;
+    const done = () => { try { if (child && !child.killed) child.kill(); } catch {} resolve(); };
     try {
-      const req = http.get(url, { timeout: 1500 }, (res) => { res.resume(); resolve(res.statusCode < 500); });
-      req.on('timeout', () => { try { req.destroy(); } catch {} resolve(false); });
-      req.on('error', () => resolve(false));
-    } catch { resolve(false); }
+      child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        `Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort ${Number(port)} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }`
+      ], { windowsHide: true, stdio: 'ignore' });
+      child.once('error', () => done());
+      child.once('close', () => done());
+      setTimeout(done, 8000);
+    } catch { resolve(); }
   });
 }
 // 尝试复用退出时驻留的 harness 服务（方案A）。成功返回 URL，否则 null。
@@ -528,7 +541,15 @@ async function tryReuseHarness() {
     // 只要探测到服务健康就直接复用（不设时间窗）：
     // 正常退出走“驻留 60s 后杀”；异常强杀时驻留进程会一直存活，
     // 此时复用它可避免再次冷启动（约 3 分钟）并避免新老服务端口并存。
-    if (!(await probeUrl(url))) return null;
+    if (!(await probeUrl(url))) {
+      // 驻留服务已失效（进程活着但 UI 404/无 __DSH_BOOT__ 标记）：
+      // 清除缓存并终止坏进程，避免其残留占端口、被后续启动反复误复用导致白屏。
+      const m = url.match(/^http:\/\/127\.0\.0\.1:(\d+)/);
+      appendLog(`[desktop] 驻留 harness 已失效（${url}），清理坏进程并走冷启动\n`);
+      try { fs.rmSync(urlFile, { force: true }); } catch {}
+      if (m && m[1]) await killLocalPortOwner(m[1]);
+      return null;
+    }
     // 复用成功：撤销延迟杀，驻留进程改由本实例接管
     if (harnessResidentTimer) { clearTimeout(harnessResidentTimer); harnessResidentTimer = null; }
     residentProc = null;
@@ -640,12 +661,19 @@ function reloadHarness(options = {}) {
     if (soft && options.overlay !== false) showSoftOverlay(options.msg || '正在应用更改…');
     else if (!soft) showLoading();
     try {
-      // 调用方（回滚/删除/卸载重试）在进入 reloadHarness 前已经清场；这里只需停掉自己的服务再重启，避免二次同步 PowerShell 卡顿
-      await suspendHarness({ skipSweep: true });
+      // 完整清场后再重启（不再 skipSweep）：旧服务可能来自驻留/外部复用
+      // （serverProc 为空，调用方无法停掉它），且插件变更后旧进程已加载的
+      // 模块与新 node_modules 不一致、UI 可能已失效——残留进程若被下次启动
+      // 误复用（旧宽松探测把 404 当健康）就会导致窗口白屏。
+      await suspendHarness();
       const url = await startHarness();
       if (win && !win.isDestroyed()) win.loadURL(url);
       return { ok: true, msg: soft ? '已在当前窗口刷新' : '已刷新会话' };
     } catch (err) {
+      // 重启失败：清掉一切残留 dsh web 进程并清除驻留缓存，
+      // 避免坏进程继续占端口、被下次启动误复用（白屏根因之一）
+      try { await suspendHarness(); } catch {}
+      try { fs.rmSync(path.join(dshHome(), 'cache', 'harness-url.txt'), { force: true }); } catch {}
       showError(err && err.message ? err.message : String(err));
       return { ok: false, msg: String((err && err.message) || err) };
     } finally {
@@ -1031,6 +1059,27 @@ function createWindow(options = {}) {
     lastReconnectAt = now;
     appendLog('[desktop] 主页面加载失败，自动重新连接 harness…\n');
     connect();
+  });
+  // 白屏兜底：页面“加载成功”但内容不是 DSH UI（如驻留 harness 已坏、
+  // 所有路由返回 404 空页面）时 did-fail-load 不会触发，窗口会一直白屏。
+  // 主 frame 加载完 harness URL 后校验 __DSH_BOOT__ 标记，缺失则清缓存并冷启动。
+  wc.on('did-finish-load', () => {
+    try {
+      if (!win || win.isDestroyed() || quitting) return;
+      const cur = win.webContents.getURL();
+      if (!serverUrl || !(cur === serverUrl || cur.startsWith(serverUrl + '/'))) return;
+      win.webContents.executeJavaScript(`typeof window.__DSH_BOOT__ !== 'undefined'`)
+        .then((hasBoot) => {
+          if (hasBoot) return;
+          const now = Date.now();
+          if (now - lastReconnectAt < 10000) return;
+          lastReconnectAt = now;
+          appendLog(`[desktop] 已加载页面缺少 __DSH_BOOT__ 标记（${cur}），驻留 harness 可能已失效，清缓存并冷启动\n`);
+          try { fs.rmSync(path.join(dshHome(), 'cache', 'harness-url.txt'), { force: true }); } catch {}
+          connect();
+        })
+        .catch(() => {});
+    } catch {}
   });
   // 加载超时保护：loading 阶段长时间未就绪时强制刷新一次（避免灰屏卡死）
   const loadingWatch = setInterval(() => {
