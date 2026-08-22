@@ -47,10 +47,16 @@
   </div>
   <script>
     try {
-      const first = new URLSearchParams(location.search).get("first") === "1";
-      document.getElementById("status").textContent = first
-        ? "正在初始化运行环境… 首次启动约需 1–2 分钟，之后启动会快很多"
-        : "正在加载环境…";
+      const params = new URLSearchParams(location.search);
+      const status = params.get("status");
+      const first = params.get("first") === "1";
+      if (status) {
+        document.getElementById("status").textContent = status;
+      } else {
+        document.getElementById("status").textContent = first
+          ? "正在初始化运行环境… 首次启动约需 1–2 分钟，之后启动会快很多"
+          : "正在加载环境…";
+      }
     } catch {}
   </script>
 </body>

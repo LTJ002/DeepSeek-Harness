@@ -495,10 +495,12 @@ function startHarness() {
 function isAppUrl(url) {
   return !!serverUrl && (url === serverUrl || url.startsWith(serverUrl + '/'));
 }
-function showLoading() {
+function showLoading(statusMsg) {
   if (!win) return;
+  const query = { first: '0' };
+  if (typeof statusMsg === 'string' && statusMsg) query.status = statusMsg;
   if (!win.webContents.getURL().includes('loading.html')) {
-    win.loadFile(path.join(__dirname, 'app', 'loading.html'));
+    win.loadFile(path.join(__dirname, 'app', 'loading.html'), { query });
   }
 }
 function showError(message) {
@@ -682,7 +684,7 @@ function reloadHarness(options = {}) {
     const soft = options.soft === true;
     // overlay:false = 静默刷新（装后验证/回滚等后台流程），不打断用户，状态由右下角任务面板呈现
     if (soft && options.overlay !== false) showSoftOverlay(options.msg || '正在应用更改…');
-    else if (!soft) showLoading();
+    else if (!soft) showLoading(options.msg);
     try {
       // 完整清场后再重启（不再 skipSweep）：旧服务可能来自驻留/外部复用
       // （serverProc 为空，调用方无法停掉它），且插件变更后旧进程已加载的
@@ -697,7 +699,13 @@ function reloadHarness(options = {}) {
       // 避免坏进程继续占端口、被下次启动误复用（白屏根因之一）
       try { await suspendHarness(); } catch {}
       try { fs.rmSync(path.join(dshHome(), 'cache', 'harness-url.txt'), { force: true }); } catch {}
-      showError(err && err.message ? err.message : String(err));
+      // onFail:'loading'：后台流程（插件装后验证/自动回滚）失败时不弹报错页，
+      // 改显加载页，由调用方继续自动回滚恢复；最终恢复失败再由调用方决定兜底。
+      if (options.onFail === 'loading') {
+        showLoading(options.failMsg || '正在恢复服务…');
+      } else {
+        showError(err && err.message ? err.message : String(err));
+      }
       return { ok: false, msg: String((err && err.message) || err) };
     } finally {
       reloadingHarness = false;
@@ -1351,14 +1359,27 @@ function listPlugins() {
 function isValidPkgSpec(pkg) {
   if (typeof pkg !== 'string') return false;
   if (/^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/i.test(pkg)) return true;
+  // 带版本/标签的 npm 规范：name@latest / name@^1.0.0 / @scope/name@1.0.0
+  if (/^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*@[^\/]+$/i.test(pkg)) return true;
   if (/^github:[A-Za-z0-9._-]+\/[A-Za-z0-9._~#-]+$/i.test(pkg)) return true;
   if (/^git\+https:\/\/.+/i.test(pkg)) return true;
   if (/^git\+ssh:\/\/.+/i.test(pkg)) return true;
   if (/^https:\/\/.+\/.*\.git$/i.test(pkg)) return true;
+  // 纯 GitHub 页面 URL：https://github.com/owner/repo（含 /releases、/releases/latest、/tags、/tree/<b> 等子页，
+  // 会被规范化为 release tarball / github: 源安装）
+  if (/^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+(?:\.git)?(?:\/[A-Za-z0-9._-]+)*\/?$/i.test(pkg)) return true;
   return /^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/archive\/refs\/heads\/[A-Za-z0-9._-]+\.tar\.gz$/i.test(pkg);
 }
 function isNpmPkgName(pkg) {
   return /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/i.test(pkg || '');
+}
+// 从 name@version / name@latest / @scope/name@range 中提取真实包名
+function specName(pkg) {
+  const s = String(pkg || '').trim();
+  if (!s) return s;
+  const searchStart = s.startsWith('@') ? s.indexOf('/') : -1;
+  const at = s.indexOf('@', searchStart + 1);
+  return at > 0 ? s.slice(0, at) : s;
 }
 // 带超时与单次结算保护的子进程运行：pnpm 卡死时杀掉进程树并返回失败，避免 UI 永久转圈
 function runPluginChild(mode, pkg, env, timeoutMs, extraArgs = [], job) {
@@ -1538,6 +1559,11 @@ function installedNameForSpec(pkg) {
   } catch {}
   return null;
 }
+// 解析安装时用的真实包名：npm 名直接取（兼容 name@version）；git/github 源回退到已安装依赖名
+function installedPluginName(pkg) {
+  if (isNpmPkgName(pkg)) return specName(pkg);
+  return installedNameForSpec(pkg) || specName(pkg);
+}
 // ---------- 插件装后验证 + 自动回滚 ----------
 // 安装成功（pnpm 返回 0）不等于插件能加载：不兼容的插件会在 harness 重启时
 // 崩溃或在前端显示加载失败。安装后自动重启验证，失败即回滚，避免破坏工作区。
@@ -1578,7 +1604,7 @@ async function waitForPluginLoadCheck(timeoutMs = 30000) {
 // 安装后验证：软刷新重启 harness + 检查页面加载
 async function verifyPluginAfterInstall() {
   try {
-    const reload = await reloadHarness({ soft: true, overlay: false, msg: '正在验证插件加载…' });
+    const reload = await reloadHarness({ soft: true, overlay: false, msg: '正在验证插件加载…', onFail: 'loading', failMsg: '插件验证失败，正在自动回滚并恢复服务…' });
     if (!reload || reload.ok !== true) {
       return { ok: false, reason: 'Harness 重启失败：' + ((reload && reload.msg) || '未知错误') };
     }
@@ -1587,22 +1613,69 @@ async function verifyPluginAfterInstall() {
     return { ok: false, reason: '验证异常：' + String(e && e.message || e) };
   }
 }
-// 回滚：更新失败时恢复原版本（npm 源）；新装失败时卸载插件 + 移除 bundle + 恢复 harness
+// 回滚：更新失败时恢复原版本（npm 源）；新装失败时卸载插件 + 移除 bundle + 恢复 harness。
+// pnpm remove 失败时强制清理（deps/bundles/node_modules 目录），确保插件绝不残留导致下次启动崩溃。
 async function rollbackPluginInstall(pkg, name, job, restoreVersion) {
   const parts = [];
+  const target = name || pkg;
+  const forceClean = (why) => {
+    try {
+      if (!target) return false;
+      const manifestPath = path.join(profileDir(), 'package.json');
+      const manifest = readJsonSafe(manifestPath) || {};
+      let changed = false;
+      if (Object.prototype.hasOwnProperty.call(manifest.dependencies || {}, target)) {
+        delete manifest.dependencies[target];
+        changed = true;
+      }
+      const bundles = Array.isArray(manifest.dsh?.profile?.bundles) ? manifest.dsh.profile.bundles : [];
+      const idx = bundles.indexOf(target);
+      if (idx >= 0) { bundles.splice(idx, 1); changed = true; }
+      if (changed) {
+        manifest.dsh = manifest.dsh || {};
+        manifest.dsh.profile = manifest.dsh.profile || {};
+        manifest.dsh.profile.bundles = bundles;
+        try { fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8'); } catch {}
+      }
+      const rel = target.split('/');
+      const nmPath = path.join(profileDir(), 'node_modules', ...rel);
+      if (fs.existsSync(nmPath)) { fs.rmSync(nmPath, { recursive: true, force: true }); }
+      parts.push('已强制清理残留（' + why + '）');
+      return true;
+    } catch {}
+    return false;
+  };
   try {
     if (name) syncBundleAfterUninstall(name, { ok: true });
     const env = await pnpmEnv();
     // 更新场景（原版本已知）：恢复到更新前的版本，而不是卸载整个插件
     if (restoreVersion) {
       const rv = await runPluginChild('add', `${name}@${restoreVersion}`, env, 300000, [], job);
-      parts.push(rv.ok ? `已恢复原版本 ${restoreVersion}` : '恢复原版本失败：' + String(rv.log || '').slice(-200));
+      if (rv.ok) {
+        parts.push(`已恢复原版本 ${restoreVersion}`);
+      } else {
+        // 恢复失败：坏版本仍可能残留，强制清理保证应用能启动（插件可稍后重新安装）
+        parts.push('恢复原版本失败：' + String(rv.log || '').slice(-200));
+        if (name) forceClean('恢复原版本失败');
+      }
     } else {
-      const rm = await runPluginChild('remove', name || pkg, env, 300000, [], job);
-      parts.push(rm.ok ? '已卸载' : '卸载失败：' + String(rm.log || '').slice(-200));
+      const rm = await runPluginChild('remove', target, env, 300000, [], job);
+      if (rm.ok) {
+        parts.push('已卸载');
+      } else {
+        // pnpm remove 失败（文件占用/锁冲突等）：强制清理，避免插件残留导致下次启动崩溃
+        parts.push('卸载失败：' + String(rm.log || '').slice(-200));
+        if (target) {
+          const manifest = readJsonSafe(path.join(profileDir(), 'package.json')) || {};
+          const stillThere = Object.prototype.hasOwnProperty.call(manifest.dependencies || {}, target) ||
+            fs.existsSync(path.join(profileDir(), 'node_modules', ...target.split('/')));
+          if (stillThere) forceClean('pnpm remove 失败');
+        }
+      }
     }
   } catch (e) {
     parts.push('回滚异常：' + String(e && e.message || e));
+    if (target) forceClean('回滚异常');
   }
   try {
     const reload = await reloadHarness({ soft: true, overlay: false, msg: '已恢复服务…' });
@@ -1620,9 +1693,10 @@ function installPlugin(pkg) {
       const preInstalled = (() => {
         try {
           const nm = path.join(profileDir(), 'node_modules');
+          const base = specName(pkg);
           const candidates = [];
-          if (pkg.startsWith('@') && pkg.includes('/')) candidates.push(path.join(nm, ...pkg.split('/')));
-          else candidates.push(path.join(nm, pkg));
+          if (base.startsWith('@') && base.includes('/')) candidates.push(path.join(nm, ...base.split('/')));
+          else candidates.push(path.join(nm, base));
           for (const c of candidates) {
             const mf = path.join(c, 'package.json');
             if (fs.existsSync(mf)) {
@@ -1633,38 +1707,83 @@ function installPlugin(pkg) {
           return null;
         } catch { return null; }
       })();
-      let result = await runPluginChild('add', pkg, await pnpmEnv(), 300000, [], job);
-      if (!result.ok) {
-        // 常规安装失败（如网络/registry 问题）：自动升级为 AI 安装（诊断 → 白名单修复 → 重试）
+      // 纯 GitHub 页面 URL（https://github.com/o/r、/releases、/tags、/tree/<b> 等）：
+      // 用户意图是装这个仓库 → 直接以最新 release tag tarball 为主方式，无 release 时退回 github:o/r
+      const gRepo = githubRepoFromInput(pkg);
+      const isGitHubPage = gRepo && /^https?:\/\/github\.com\//.test(pkg) && !pkg.includes('.git') && !pkg.includes('/archive/');
+      let primary = pkg;
+      if (isGitHubPage) {
+        // 贴 GitHub 仓库/Releases 页 → 主方式直接用最新 release 的上传下载包（.tgz 等），
+        // 没有下载包再用 tag tarball，最后退回 github:o/r
+        const rel = await githubLatestRelease(gRepo.owner, gRepo.repo);
+        primary = (rel && rel.assets && rel.assets[0]) || (rel && rel.tagTarball) || ('github:' + gRepo.owner + '/' + gRepo.repo);
+      }
+      let result = await runPluginChild('add', primary, await pnpmEnv(), 300000, [], job);
+      if (result.ok) {
+        const done = await finishInstallSpec(pkg, primary, job, preInstalled, result);
+        return done.result;
+      }
+      // 主方式失败：先判断失败类型
+      const notFound = looksLikePackageNotFound(result.log);
+      let aiUsed = false, aiResult = null;
+      if (!notFound) {
+        // 网络/registry 类错误：自动升级为 AI 安装（诊断 → 白名单修复 → 重试）
         if (job) job.stage = 'AI 诊断中…';
         appendLog('[desktop] 常规安装失败，自动启动 AI 诊断…\n');
-        return aiInstallPlugin(pkg, job, result);
+        aiResult = await aiInstallPlugin(primary, job, result);
+        aiUsed = true;
+        if (aiResult && aiResult.ok) return aiResult;
       }
-      // 包名不是 npm 名（github:/https 归档）时按写入 profile 的实际包名登记 bundle 层
-      const name = isNpmPkgName(pkg) ? pkg : installedNameForSpec(pkg);
-      if (name) result = syncBundleAfterInstall(name, result);
-      // 装后验证：重启 harness 确认插件能加载，失败自动回滚
-      const verify = await verifyPluginAfterInstall();
-      if (!verify.ok) {
-        // 插件不兼容（能装但加载失败）：回滚到原版本（更新场景）或卸载（新装场景）
-        if (job) job.stage = '回滚中（插件不兼容）…';
-        const rollback = await rollbackPluginInstall(pkg, name, job, preInstalled);
-        const msg = `插件已安装但加载失败：${verify.reason}\n已自动回滚：${rollback}\n\n提示：该插件与当前内核（${bundledVersion()}）不兼容，可尝试其他版本或等待插件更新。`;
-        appendLog('[desktop] 插件加载失败已回滚，不再重试：' + verify.reason + '\n');
-        return { ok: false, log: String(result.log || '') + '\n\n⚠ ' + msg, rolledBack: true };
+      // 多方式回退：npm 名 → 市场/GitHub 搜索；GitHub 系 → tarball(main/master)/github:/git+https
+      const alternates = (await buildInstallCandidates(primary)).filter((s) => s !== primary);
+      const tried = [{ spec: primary, state: '✖' }];
+      let lastResult = result;
+      // 同仓库崩溃标记：某仓库的源"装上但验证崩"后，同仓库的其它形式（分支/HEAD）是同一份代码，
+      // 大概率同样崩，直接跳过避免每轮 2 分钟的重复验证+回滚；不同仓库仍继续尝试。
+      let crashedRepoKey = null;
+      for (let i = 0; i < alternates.length; i++) {
+        const spec = alternates[i];
+        const repoKey = (() => {
+          const g = githubRepoFromInput(spec);
+          return g ? g.owner + '/' + g.repo : spec;
+        })();
+        if (crashedRepoKey && crashedRepoKey === repoKey) {
+          tried.push({ spec, state: '⏭' });
+          if (job) job.stage = '跳过同仓库其它形式（' + describeSpec(spec) + '，与该仓库已崩溃源为同一代码）…';
+          continue;
+        }
+        if (job) job.stage = '改用备用源安装（' + (i + 1) + '/' + alternates.length + '）：' + describeSpec(spec) + '…';
+        const alt = await finishInstallSpec(pkg, spec, job, preInstalled);
+        // 状态：✔ 安装并验证通过；⚠ 装上但加载失败已回滚；✖ pnpm 安装失败；⏭ 同仓库已崩跳过
+        tried.push({ spec, state: alt.ok ? '✔' : (alt.installed ? '⚠' : '✖') });
+        if (alt.ok) return alt.result;
+        lastResult = alt.result;
+        if (alt.installed) {
+          crashedRepoKey = repoKey;
+          if (job) job.stage = '该源加载失败已回滚；同仓库其它形式将跳过…';
+        }
       }
-      result.log = String(result.log || '') + '\n（插件加载验证通过）';
-      // 同步离线预装副本：更新/安装成功后把插件最新副本写回 preloaded-plugins，
-      // 之后即使禁用再恢复，恢复用的也是最新版本
-      try { syncPreloadedCopy(name); } catch {}
-      // 失效更新检测缓存：更新/安装后重新检测，避免旧缓存仍显示“有更新”
-      pluginUpdateCache = null;
-      return result;
+      const summary = tried.map((t) => t.state + ' ' + t.spec).join('；');
+      if (!aiUsed) {
+        // 404/找不到类失败：机械备用源全部失败后，最后交给 AI 结合仓库 README 检索正确安装方式
+        if (job) job.stage = 'AI 检索仓库安装方式…';
+        aiResult = await aiInstallPlugin(primary, job, result, { githubOnly: true });
+        aiUsed = true;
+        if (aiResult && (aiResult.ok || aiResult.rolledBack)) return aiResult;
+      }
+      if (aiUsed && aiResult) {
+        return { ok: false, log: String(aiResult.log || '') + '\n\n（机械备用源结果：' + summary + '）', ai: aiResult.ai };
+      }
+      return {
+        ok: false,
+        log: String(lastResult.log || '') + '\n\n已尝试 ' + tried.length + ' 种安装方式：' + summary +
+          '\n提示：若是 GitHub 插件，可粘贴 github:<owner>/<repo> 或仓库 archive 下载链接安装。'
+      };
     } catch (err) {
       // 兜底：异常时依赖可能已写入 profile，尝试回滚（更新场景恢复原版本），避免残留导致下次启动崩溃
       let rb = '';
       try {
-        const name = isNpmPkgName(pkg) ? pkg : installedNameForSpec(pkg);
+        const name = installedPluginName(pkg);
         rb = await rollbackPluginInstall(pkg, name, job, preInstalled);
       } catch {}
       const msg = '安装异常：' + String(err && err.message || err) + (rb ? '\n已自动回滚：' + rb : '');
@@ -1672,6 +1791,204 @@ function installPlugin(pkg) {
       return { ok: false, log: msg, rolledBack: !!rb };
     }
   });
+}
+// 安装方式的友好描述（任务面板阶段提示用）
+function describeSpec(spec) {
+  const s = String(spec || '');
+  const repo = githubRepoFromInput(s);
+  const r = repo ? repo.owner + '/' + repo.repo : s;
+  let m;
+  if ((m = /\/archive\/refs\/tags\/([^/]+)\.tar\.gz$/.exec(s))) return 'GitHub Release ' + m[1] + ' (' + r + ')';
+  if ((m = /\/archive\/refs\/heads\/([^/]+)\.tar\.gz$/.exec(s))) return 'GitHub ' + m[1] + ' 分支 (' + r + ')';
+  if (s.startsWith('github:')) return 'GitHub git 源 (' + r + ')';
+  if (/^git\+https:\/\//.test(s)) return 'GitHub git+https (' + r + ')';
+  if (s.startsWith('link:')) return '本地目录 (' + s.slice(5) + ')';
+  return s;
+}
+// 一次安装方式的全流程：pnpm add → 登记 bundle → 装后验证；验证失败自动回滚。
+// installed=true 表示已装上（无论验证是否通过），调用方据此决定是否继续尝试其它方式。
+async function finishInstallSpec(pkg, spec, job, preInstalled, existingResult) {
+  let result = existingResult || await runPluginChild('add', spec, await pnpmEnv(), 300000, [], job);
+  if (!result.ok) return { ok: false, installed: false, result };
+  const name = installedPluginName(spec);
+  if (name) result = syncBundleAfterInstall(name, result);
+  const verify = await verifyPluginAfterInstall();
+  if (!verify.ok) {
+    // 插件不兼容（能装但加载失败）：回滚到原版本（更新场景）或卸载（新装场景）
+    if (job) job.stage = '回滚中（插件不兼容）…';
+    const rollback = await rollbackPluginInstall(spec, name, job, preInstalled);
+    const msg = `插件已安装但加载失败：${verify.reason}\n已自动回滚：${rollback}\n\n提示：该插件与当前内核（${bundledVersion()}）不兼容，可尝试其他版本或等待插件更新。`;
+    appendLog('[desktop] 插件加载失败已回滚，不再重试：' + verify.reason + '\n');
+    // 关键：pnpm add 的 ok:true 只代表“装上”，加载验证失败已回滚，必须改判失败，
+    // 否则前端按 result.ok 显示“安装成功”，造成误报
+    result.ok = false;
+    result.rolledBack = true;
+    result.bundleChanged = false; // 回滚后插件已移除，不再提示重启
+    result.log = String(result.log || '') + '\n\n⚠ ' + msg;
+    return { ok: false, installed: true, rolledBack: true, result };
+  }
+  result.log = String(result.log || '') + '\n（插件加载验证通过）';
+  // 同步离线预装副本：更新/安装成功后把插件最新副本写回 preloaded-plugins，
+  // 之后即使禁用再恢复，恢复用的也是最新版本
+  try { syncPreloadedCopy(name); } catch {}
+  // 失效更新检测缓存：更新/安装后重新检测，避免旧缓存仍显示“有更新”
+  pluginUpdateCache = null;
+  return { ok: true, result };
+}
+// 从任意 GitHub 系输入提取 owner/repo：
+// 支持 github:、git+https/git+ssh、archive tarball（heads/tags）、
+// 以及带任意子页后缀的主页 URL（/releases、/releases/latest、/tags、/tree/<b>、/blob/<b>/... 等）
+function githubRepoFromInput(pkg) {
+  const s = String(pkg || '').trim();
+  let m;
+  if ((m = /^github:([^/]+)\/([^/#]+?)(?:\.git)?$/.exec(s))) return { owner: m[1], repo: m[2] };
+  if ((m = /^git\+https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/.exec(s))) return { owner: m[1], repo: m[2] };
+  if ((m = /^git\+ssh:\/\/git@github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/.exec(s))) return { owner: m[1], repo: m[2] };
+  // archive tarball 必须在通用主页正则之前匹配，避免被后缀组吞掉 branch/tag
+  if ((m = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/archive\/refs\/(?:heads|tags)\/([^/]+)\.tar\.gz$/.exec(s))) return { owner: m[1], repo: m[2], branch: m[3] };
+  // 通用主页/子页 URL：https://github.com/o/r、/releases、/releases/latest、/tags、/tree/main 等
+  if ((m = /^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/[\w.\-]+(?:\/[\w.\-]*)*)?\/?$/.exec(s))) return { owner: m[1], repo: m[2] };
+  return null;
+}
+// 判断失败是否属于“包/仓库不存在”（404 类）：这类问题 AI 帮不上忙，直接走多方式回退
+function looksLikePackageNotFound(text) {
+  return /ERR_PNPM_FETCH_404|404|not in the npm registry|not found|doesn't exist|does not exist|no such package|unable to find|Repository not found|repository '?[^']*'? not found/i.test(String(text || ''));
+}
+// 市场（awesome-dsh-plugin）里找仓库短名 === 包名的条目
+async function marketRepoForName(name) {
+  try {
+    const market = await getMarketList();
+    const found = [];
+    for (const g of (market && market.groups) || []) {
+      for (const it of (g && g.items) || []) {
+        const base = String(it.repo || '').split('/').pop();
+        if (base && String(base).toLowerCase() === String(name).toLowerCase()) found.push(String(it.repo));
+      }
+    }
+    return [...new Set(found)];
+  } catch { return []; }
+}
+// GitHub 仓库搜索 + 严格校验：仓库名与包名完全一致，且仓库根 package.json 的 name
+// 必须与目标包名一致（防止同名 fork / 无关项目被误当成目标包），最多采纳 2 个候选。
+async function githubSearchCandidates(name) {
+  const hits = [];
+  try {
+    const data = await fetchJson('https://api.github.com/search/repositories?q=' + encodeURIComponent(name + ' in:name') + '&per_page=5', 8000);
+    for (const it of ((data && data.items) || [])) {
+      if (!it || !it.full_name || String(it.name || '').toLowerCase() !== String(name).toLowerCase()) continue;
+      try {
+        const info = await resolveRepoPkg(String(it.full_name));
+        if (info && info.name === name) hits.push(String(it.full_name));
+      } catch { /* 取不到 package.json（非 npm 包仓库）则跳过 */ }
+      if (hits.length >= 2) break;
+    }
+  } catch {}
+  return hits;
+}
+// 查询仓库最新 release：返回 { tag, tagTarball, assets }。
+// assets 是该 release 页面上传的下载包（编译好的 .tgz/.tar.gz 等，比源码快照更"正规"），
+// 仅保留可被 pnpm 直接安装的包形态；无 release/被限流时回退 tags.atom 取 tag。
+async function githubLatestRelease(owner, repo) {
+  const out = { tag: null, tagTarball: null, assets: [] };
+  try {
+    const data = await fetchJson('https://api.github.com/repos/' + encodeURIComponent(owner) + '/' + encodeURIComponent(repo) + '/releases/latest');
+    if (data) {
+      if (typeof data.tag_name === 'string' && data.tag_name) out.tag = data.tag_name;
+      if (Array.isArray(data.assets)) {
+        for (const a of data.assets) {
+          if (!a || typeof a.name !== 'string' || typeof a.browser_download_url !== 'string') continue;
+          if (!/\.(tgz|tar\.gz|tar)$/i.test(a.name)) continue; // 只认可安装的包形态
+          out.assets.push(a.browser_download_url);
+        }
+      }
+    }
+  } catch { /* 404=无 release / 限流，走 tags.atom 回退 */ }
+  if (!out.tag) {
+    try {
+      const text = await Promise.race([
+        fetchText('https://github.com/' + owner + '/' + repo + '/tags.atom'),
+        new Promise((r) => setTimeout(() => r(null), 6000))
+      ]);
+      const titles = (String(text || '').match(/<title>([^<]+)<\/title>/gi) || [])
+        .map((t) => t.replace(/<\/?title>/gi, '').trim())
+        .filter((t) => t && !/^(?:releases?|tags)\s+(?:notes\s+)?from/i.test(t));
+      if (titles[0]) out.tag = titles[0];
+    } catch {}
+  }
+  if (out.tag) out.tagTarball = 'https://github.com/' + owner + '/' + repo + '/archive/refs/tags/' + encodeURIComponent(out.tag) + '.tar.gz';
+  return out;
+}
+// 兼容旧调用：只取最新 release 的 tag tarball
+async function githubReleaseTarball(owner, repo) {
+  const rel = await githubLatestRelease(owner, repo);
+  return (rel && rel.tagTarball) || null;
+}
+// 构造备用安装方式链（不含主方式本身）。
+// 严格约束：
+//  - GitHub 系输入：只回退到同一仓库的其它形式，且 Releases（tag tarball）优先于分支 tarball/HEAD；
+//  - 裸 npm 名：仅限新装（更新/已存在依赖时禁止换源），先试市场（可信来源），再试经
+//    package.json name 校验过的 GitHub 搜索命中。
+async function buildInstallCandidates(pkg) {
+  const out = [];
+  const push = (s) => { if (typeof s === 'string' && s && !out.includes(s)) out.push(s); };
+  const repo = githubRepoFromInput(pkg);
+  if (repo) {
+    // 同仓库不同形式：最新 release 的上传下载包（.tgz 等，最正规）→ tag tarball（源码快照）
+    // → 分支 tarball（纯 HTTP，不依赖 git）→ github:（git clone + prepare 脚本可能被拦截）→ git+https
+    const rel = await githubLatestRelease(repo.owner, repo.repo);
+    if (rel) {
+      for (const asset of rel.assets) push(asset);
+      if (rel.tagTarball) push(rel.tagTarball);
+    }
+    push('https://github.com/' + repo.owner + '/' + repo.repo + '/archive/refs/heads/main.tar.gz');
+    push('https://github.com/' + repo.owner + '/' + repo.repo + '/archive/refs/heads/master.tar.gz');
+    push('github:' + repo.owner + '/' + repo.repo);
+    push('git+https://github.com/' + repo.owner + '/' + repo.repo + '.git');
+    return out;
+  }
+  if (!isNpmPkgName(specName(pkg))) return out;
+  const name = specName(pkg);
+  // 更新/升级场景（name@version 或该包已是 profile 依赖）：禁止切换到其它仓库源，
+  // 避免把 npm 插件换成同名 GitHub 仓库的版本
+  const isUpdate = pkg !== name || (() => {
+    try {
+      const manifest = readJsonSafe(path.join(profileDir(), 'package.json')) || {};
+      if (Object.prototype.hasOwnProperty.call(manifest.dependencies || {}, name)) return true;
+      const rel = name.split('/');
+      return fs.existsSync(path.join(profileDir(), 'node_modules', ...rel));
+    } catch { return false; }
+  })();
+  if (isUpdate) return out;
+  // 新装：市场匹配（curated 来源，可信）
+  const marketRepos = await marketRepoForName(name);
+  for (const r of marketRepos) {
+    const parts = String(r).split('/');
+    if (parts.length === 2) {
+      const rel = await githubLatestRelease(parts[0], parts[1]);
+      if (rel) {
+        for (const asset of rel.assets) push(asset);
+        if (rel.tagTarball) push(rel.tagTarball);
+      }
+    }
+    push('https://github.com/' + r + '/archive/refs/heads/main.tar.gz');
+    push('https://github.com/' + r + '/archive/refs/heads/master.tar.gz');
+    push('github:' + r);
+  }
+  // 新装：GitHub 搜索（严格校验包名一致后才采纳）
+  for (const hit of await githubSearchCandidates(name)) {
+    const parts = String(hit).split('/');
+    if (parts.length === 2) {
+      const rel = await githubLatestRelease(parts[0], parts[1]);
+      if (rel) {
+        for (const asset of rel.assets) push(asset);
+        if (rel.tagTarball) push(rel.tagTarball);
+      }
+    }
+    push('https://github.com/' + hit + '/archive/refs/heads/main.tar.gz');
+    push('https://github.com/' + hit + '/archive/refs/heads/master.tar.gz');
+    push('github:' + hit);
+  }
+  return out;
 }
 // 卸载前检查：扫描 profile node_modules 里所有插件，找 peerDependencies/dependencies 里引用了目标插件的已装插件
 // （如 dsh-git-remotes 通过 peerDependencies.dsh-better-sidebar 声明依赖，卸载主插件后它将因服务缺失而无法加载）
@@ -1888,7 +2205,100 @@ function sanitizeAiCommand(command) {
   }
   return allowed;
 }
-async function aiInstallPlugin(pkg, job, initialResult = null) {
+// ---- AI 安装方式检索：抓仓库 README → AI 找出正确安装 spec → 白名单校验后尝试 ----
+function aiFindSpecPrompt(repo, readme, log) {
+  return `你是 DeepSeek Harness 的插件安装专家。用户尝试安装的插件疑似来自 GitHub 仓库 ${repo}，直接安装失败。以下是该仓库 README 的内容（截取）和安装失败日志。请从 README 中找出正确的下载/安装方式。
+
+只返回 JSON（不要 markdown 代码块、不要注释）：{"spec":"安装方式"}；README 里没有明确安装方式时返回 {"spec":""}
+
+spec 只允许以下形式之一：
+- github:${repo}
+- https://github.com/${repo}/archive/refs/heads/<分支名>.tar.gz
+- https://github.com/${repo}/archive/refs/tags/<版本号>.tar.gz
+- https://github.com/${repo}/releases/download/<版本号>/<文件名>（release 上传的下载包）
+- 或 npm 包名（README 明确给出 npm 安装名时）
+
+必须基于 README 实际内容，禁止臆造 URL、版本号或分支名。
+
+[README 开始]
+${String(readme || '').slice(0, 6000)}
+[README 结束]
+
+[安装失败日志开始]
+${String(log || '').slice(-3000)}
+[安装失败日志结束]`;
+}
+function callAiFindSpec(repo, readme, log, cfg) {
+  if (!cfg || !cfg.key) {
+    return Promise.resolve({ ok: false, msg: '未配置 AI 服务密钥：请在 ~/.dsh/.credentials.yaml 配置当前默认模型服务对应的密钥（如 OPENCODE_GO_API_KEY / DEEPSEEK_API_KEY）后重试' });
+  }
+  return new Promise((resolve) => {
+    let body;
+    try {
+      const url = cfg.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+      body = JSON.stringify({
+        model: cfg.model,
+        messages: [{ role: 'user', content: aiFindSpecPrompt(repo, readme, log) }],
+        temperature: 0.1,
+        max_tokens: 500,
+        response_format: { type: 'json_object' }
+      });
+    } catch (e) { return resolve({ ok: false, msg: '构造请求失败：' + String(e && e.message || e) }); }
+    let req;
+    try {
+      req = https.request(cfg.baseUrl.replace(/\/+$/, '') + '/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + cfg.key, 'user-agent': 'dsh-desktop' },
+        timeout: 30000
+      }, (res) => {
+        let data = '';
+        res.on('data', (c) => { data += c; if (data.length > 1e6) req.destroy(); });
+        res.on('end', () => {
+          try {
+            const j = JSON.parse(data);
+            const content = j.choices?.[0]?.message?.content || '';
+            const cleaned = String(content).replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+            const parsed = JSON.parse(cleaned);
+            if (!parsed || typeof parsed.spec !== 'string') throw new Error('AI 返回的 spec 不合法');
+            return resolve({ ok: true, spec: parsed.spec });
+          } catch (e) {
+            return resolve({ ok: false, msg: 'AI 返回解析失败：' + String(e && e.message || e) + ' raw=' + String(data).slice(0, 200) });
+          }
+        });
+      });
+      req.on('timeout', () => { req.destroy(new Error('AI 请求超时')); });
+      req.on('error', (e) => resolve({ ok: false, msg: 'AI 请求失败：' + String(e && e.message || e) }));
+      req.end(body);
+    } catch (e) {
+      return resolve({ ok: false, msg: 'AI 请求异常：' + String(e && e.message || e) });
+    }
+  });
+}
+// AI 给出的安装 spec 白名单校验：只允许同仓库的 github:/tarball/release 下载包，或 npm 包名
+function sanitizeAiSpec(spec, owner, repo) {
+  const s = String(spec || '').trim();
+  if (!s) return null;
+  if (isNpmPkgName(s)) return s;
+  if (!isValidPkgSpec(s)) return null;
+  const g = githubRepoFromInput(s);
+  if (!g || g.owner !== owner || g.repo !== repo) return null;
+  return s;
+}
+// 抓取仓库 README（main/master 任一分支，6 秒超时）
+async function fetchRepoReadme(owner, repo) {
+  for (const branch of ['main', 'master']) {
+    try {
+      const text = await Promise.race([
+        fetchText('https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/README.md'),
+        new Promise((r) => setTimeout(() => r(null), 6000))
+      ]);
+      if (text && String(text).trim()) return String(text);
+    } catch {}
+  }
+  return '';
+}
+async function aiInstallPlugin(pkg, job, initialResult = null, opts = {}) {
+  const githubOnly = !!(opts && opts.githubOnly === true);
   if (!isValidPkgSpec(pkg)) return { ok: false, log: '包名格式不正确', ai: null };
   const logParts = [];
   const push = (t) => {
@@ -1899,83 +2309,135 @@ async function aiInstallPlugin(pkg, job, initialResult = null) {
   };
   const setStage = (stage) => { if (job) job.stage = stage; };
   const rounds = [];
-  let lastResult = null;
+  let lastResult = (initialResult && initialResult.ok === false) ? initialResult : null;
   const baseEnv = await pnpmEnv();
-  setStage('AI 诊断中…');
-  if (initialResult && initialResult.ok === false) {
-    // 常规安装已失败：直接用已发生的失败日志进入诊断，不重复安装浪费时间
-    lastResult = initialResult;
-    push('常规安装已失败，基于失败日志直接诊断…');
-  } else {
-    push('第一步：常规安装 ' + pkg);
-    lastResult = await runPluginChild('add', pkg, baseEnv, 300000, [], job);
-    if (lastResult.ok) {
-      const name = isNpmPkgName(pkg) ? pkg : installedNameForSpec(pkg);
-      if (name) lastResult = syncBundleAfterInstall(name, lastResult);
-      push('✔ 常规安装成功，验证插件加载…');
-      const verify = await verifyPluginAfterInstall();
-      if (!verify.ok) {
-        const rollback = await rollbackPluginInstall(pkg, name, job);
-        push('⚠ 插件已安装但加载失败：' + verify.reason + '；已自动回滚：' + rollback);
-        return { ok: false, log: logParts.join('\n'), ai: { rounds }, rolledBack: true };
-      }
-      push('✔ 插件加载验证通过');
-      return { ok: true, log: logParts.join('\n'), ai: { rounds } };
-    }
-    push('✖ 常规安装失败，启动 AI 诊断（最多 3 轮自动修复）…');
-  }
-  const aiCfg = await aiInstallConfig();
-  if (!aiCfg) {
-    push('未配置 AI 服务密钥：请在 ~/.dsh/.credentials.yaml 配置当前默认模型服务对应的密钥（如 OPENCODE_GO_API_KEY / DEEPSEEK_API_KEY）后重试');
-    return { ok: false, log: logParts.join('\n'), ai: { rounds } };
-  }
-  push(`使用 AI 服务：${aiCfg.from}（${aiCfg.baseUrl}，模型 ${aiCfg.model}）`);
   let currentEnv = baseEnv;
-  for (let round = 1; round <= 3; round++) {
-    const diag = await callAiDiagnose(pkg, lastResult.log || '', aiCfg);
-    if (!diag.ok) {
-      push(`第 ${round} 轮 AI 诊断失败：${diag.msg}`);
-      break;
-    }
-    const fix = diag.fix;
-    const reason = String(fix.reason || fix.action || '').slice(0, 300);
-    rounds.push({ round, action: fix.action, reason, env: sanitizeAiEnv(fix.env), command: String(fix.command || '').slice(0, 200) });
-    if (fix.action === 'advice') {
-      push(`第 ${round} 轮 AI 建议人工处理：${reason}`);
-      break;
-    }
-    const newEnv = { ...currentEnv, ...sanitizeAiEnv(fix.env) };
-    const flags = sanitizeAiCommand(fix.command);
-    const envDesc = Object.keys(sanitizeAiEnv(fix.env)).length ? ' 环境变量：' + Object.keys(sanitizeAiEnv(fix.env)).join(',') : '';
-    push(`第 ${round} 轮 AI 方案：${reason}${flags.length ? ' 参数：' + flags.join(' ') : ''}${envDesc}`);
-    try {
-      lastResult = await runPluginChild('add', pkg, newEnv, 300000, flags, job);
-    } catch (e) {
-      lastResult = { ok: false, log: String(e && e.message || e) };
-    }
-    if (lastResult.ok) {
-      const name = isNpmPkgName(pkg) ? pkg : installedNameForSpec(pkg);
-      if (name) lastResult = syncBundleAfterInstall(name, lastResult);
-      push(`✔ 第 ${round} 轮 AI 修复后安装成功，验证插件加载…`);
-      const verify = await verifyPluginAfterInstall();
-      if (!verify.ok) {
-        const rollback = await rollbackPluginInstall(pkg, name);
-        push(`⚠ 插件已安装但加载失败：${verify.reason}；已自动回滚：${rollback}`);
-        return { ok: false, log: logParts.join('\n'), ai: { rounds }, rolledBack: true };
+  if (!githubOnly) {
+    setStage('AI 诊断中…');
+    if (lastResult) {
+      // 常规安装已失败：直接用已发生的失败日志进入诊断，不重复安装浪费时间
+      push('常规安装已失败，基于失败日志直接诊断…');
+    } else {
+      push('第一步：常规安装 ' + pkg);
+      lastResult = await runPluginChild('add', pkg, baseEnv, 300000, [], job);
+      if (lastResult.ok) {
+        const name = installedPluginName(pkg);
+        if (name) lastResult = syncBundleAfterInstall(name, lastResult);
+        push('✔ 常规安装成功，验证插件加载…');
+        const verify = await verifyPluginAfterInstall();
+        if (!verify.ok) {
+          const rollback = await rollbackPluginInstall(pkg, name, job);
+          push('⚠ 插件已安装但加载失败：' + verify.reason + '；已自动回滚：' + rollback);
+          return { ok: false, log: logParts.join('\n'), ai: { rounds }, rolledBack: true };
+        }
+        push('✔ 插件加载验证通过');
+        return { ok: true, log: logParts.join('\n'), ai: { rounds } };
       }
-      push('✔ 插件加载验证通过');
-      return { ok: true, log: logParts.join('\n'), ai: { rounds } };
+      push('✖ 常规安装失败，启动 AI 诊断（最多 3 轮自动修复）…');
     }
-    currentEnv = newEnv;
+    const aiCfg = await aiInstallConfig();
+    if (!aiCfg) {
+      push('未配置 AI 服务密钥：请在 ~/.dsh/.credentials.yaml 配置当前默认模型服务对应的密钥（如 OPENCODE_GO_API_KEY / DEEPSEEK_API_KEY）后重试');
+      return { ok: false, log: logParts.join('\n'), ai: { rounds } };
+    }
+    push(`使用 AI 服务：${aiCfg.from}（${aiCfg.baseUrl}，模型 ${aiCfg.model}）`);
+    for (let round = 1; round <= 3; round++) {
+      const diag = await callAiDiagnose(pkg, lastResult.log || '', aiCfg);
+      if (!diag.ok) {
+        push(`第 ${round} 轮 AI 诊断失败：${diag.msg}`);
+        break;
+      }
+      const fix = diag.fix;
+      const reason = String(fix.reason || fix.action || '').slice(0, 300);
+      rounds.push({ round, action: fix.action, reason, env: sanitizeAiEnv(fix.env), command: String(fix.command || '').slice(0, 200) });
+      if (fix.action === 'advice') {
+        push(`第 ${round} 轮 AI 建议人工处理：${reason}`);
+        break;
+      }
+      const newEnv = { ...currentEnv, ...sanitizeAiEnv(fix.env) };
+      const flags = sanitizeAiCommand(fix.command);
+      const envDesc = Object.keys(sanitizeAiEnv(fix.env)).length ? ' 环境变量：' + Object.keys(sanitizeAiEnv(fix.env)).join(',') : '';
+      push(`第 ${round} 轮 AI 方案：${reason}${flags.length ? ' 参数：' + flags.join(' ') : ''}${envDesc}`);
+      try {
+        lastResult = await runPluginChild('add', pkg, newEnv, 300000, flags, job);
+      } catch (e) {
+        lastResult = { ok: false, log: String(e && e.message || e) };
+      }
+      if (lastResult.ok) {
+        const name = installedPluginName(pkg);
+        if (name) lastResult = syncBundleAfterInstall(name, lastResult);
+        push(`✔ 第 ${round} 轮 AI 修复后安装成功，验证插件加载…`);
+        const verify = await verifyPluginAfterInstall();
+        if (!verify.ok) {
+          const rollback = await rollbackPluginInstall(pkg, name);
+          push(`⚠ 插件已安装但加载失败：${verify.reason}；已自动回滚：${rollback}`);
+          return { ok: false, log: logParts.join('\n'), ai: { rounds }, rolledBack: true };
+        }
+        push('✔ 插件加载验证通过');
+        return { ok: true, log: logParts.join('\n'), ai: { rounds } };
+      }
+      currentEnv = newEnv;
+    }
   }
-  // AI 全失败：清理可能的部分残留（某轮 pnpm 可能写入依赖），避免下次启动加载损坏
+  // ---- 从 GitHub 仓库 README 查找正确安装方式（网络类与 404 类失败都执行）----
+  {
+    const gRepo = githubRepoFromInput(pkg);
+    let repoKey = gRepo ? gRepo.owner + '/' + gRepo.repo : null;
+    if (!repoKey && isNpmPkgName(specName(pkg))) {
+      const hits = await githubSearchCandidates(specName(pkg));
+      if (hits.length) repoKey = hits[0];
+    }
+    if (repoKey) {
+      const parts = String(repoKey).split('/');
+      const owner = parts[0], repo = parts[1];
+      push('尝试从 GitHub 仓库 ' + repoKey + ' 的 README 查找正确安装方式…');
+      const readme = await fetchRepoReadme(owner, repo);
+      if (!readme) {
+        push('（未获取到 README，跳过）');
+      } else {
+        const aiCfg = await aiInstallConfig();
+        const diag = aiCfg ? await callAiFindSpec(repoKey, readme, lastResult ? lastResult.log : '', aiCfg) : { ok: false, msg: '未配置 AI 服务密钥：请在 ~/.dsh/.credentials.yaml 配置当前默认模型服务对应的密钥（如 OPENCODE_GO_API_KEY / DEEPSEEK_API_KEY）后重试' };
+        if (!diag.ok) {
+          push('AI 查找安装方式失败：' + diag.msg);
+        } else {
+          const spec = sanitizeAiSpec(diag.spec, owner, repo);
+          rounds.push({ round: 'github-readme', action: 'github-spec', reason: '从仓库 README 检索', spec: String(diag.spec || '').slice(0, 200) });
+          if (!spec) {
+            push('AI 未从 README 找到可用的安装方式' + (String(diag.spec || '').trim() ? '（AI 返回：' + String(diag.spec).slice(0, 120) + '，不符合白名单）' : ''));
+          } else {
+            push('AI 建议安装方式：' + spec);
+            const tried = await finishInstallSpec(pkg, spec, job, null);
+            if (tried.ok) {
+              push('✔ 按 AI 建议安装成功，验证通过');
+              return { ok: true, log: logParts.join('\n'), ai: { rounds }, spec };
+            }
+            if (tried.installed) {
+              push('⚠ 按 AI 建议安装后加载失败，已回滚：' + spec);
+              lastResult = tried.result;
+              return { ok: false, log: logParts.join('\n'), ai: { rounds }, rolledBack: true };
+            }
+            push('✖ 按 AI 建议安装失败：' + spec);
+            lastResult = tried.result;
+          }
+        }
+      }
+    }
+  }
+  // AI 全失败：清理可能的部分残留（某轮 pnpm 可能写入依赖），避免下次启动加载损坏。
+  // 只有依赖确实写入过（deps 有记录或 node_modules 已存在）才跑 pnpm remove，避免无意义的报错
   let cleanup = '';
   try {
-    const name = isNpmPkgName(pkg) ? pkg : installedNameForSpec(pkg);
+    const name = installedPluginName(pkg);
     if (name) {
-      const rm = await runPluginChild('remove', name, currentEnv, 300000);
-      syncBundleAfterUninstall(name, { ok: true });
-      cleanup = rm.ok ? '已清理残留依赖' : '残留清理失败（' + String(rm.log || '').slice(-150) + '）';
+      const manifest = readJsonSafe(path.join(profileDir(), 'package.json')) || {};
+      const inDeps = Object.prototype.hasOwnProperty.call(manifest.dependencies || {}, name);
+      const rel = name.split('/');
+      const nmPath = path.join(profileDir(), 'node_modules', ...rel);
+      if (inDeps || fs.existsSync(nmPath)) {
+        const rm = await runPluginChild('remove', name, currentEnv, 300000);
+        syncBundleAfterUninstall(name, { ok: true });
+        cleanup = rm.ok ? '已清理残留依赖' : '残留清理失败（' + String(rm.log || '').slice(-150) + '）';
+      }
     }
   } catch {}
   push('✖ AI 自动修复未成功，最后错误：' + String(lastResult?.log || '').slice(-600));
@@ -2351,7 +2813,14 @@ function credentialsYamlPath() {
 function readCredentialsYaml() {
   try {
     if (!fs.existsSync(credentialsYamlPath())) return {};
-    return yaml.load(fs.readFileSync(credentialsYamlPath(), 'utf8')) || {};
+    const data = yaml.load(fs.readFileSync(credentialsYamlPath(), 'utf8')) || {};
+    // Harness 的凭据文件是嵌套结构（version/refs: { KEY: value }），
+    // 桌面端历史上按平铺 KEY: value 读取；这里把 refs 平铺到顶层，两种格式都兼容，
+    // 否则 AI 安装诊断等流程会因读不到 VOLCENGINE_API_KEY 等而误报“未配置 AI 服务密钥”。
+    if (data && typeof data === 'object' && !Array.isArray(data) && data.refs && typeof data.refs === 'object' && !Array.isArray(data.refs)) {
+      return { ...data, ...data.refs };
+    }
+    return data;
   } catch { return {}; }
 }
 function writeCredentialValue(ref, value) {
@@ -3412,10 +3881,12 @@ async function pluginUpdate(name) {
   const spec = (manifest.dependencies || {})[name];
   if (!spec) return { ok: false, log: `未找到已安装依赖：${name}` };
   if (spec.startsWith('link:')) return { ok: false, log: `${name} 是本地链接插件，无法自动更新` };
-  // npm semver range（^0.13.1 / ~0.13.1 / 0.13.1 / >=x）→ 用纯包名重装拉最新；
+  // npm semver range（^0.13.1 / ~0.13.1 / 0.13.1 / >=x）→ 用 name@latest 强制解析最新版本。
+  // 不能用纯包名：pnpm add <bare-name> 在现有范围（如 ^0.15.0）已被满足、lockfile 已锁定时
+  // 会判定“already up to date”而不升级（曾导致更新后仍显示有更新）。
   // git+https / git+ssh / https:// / github: 源 → 用原 spec 重装拉最新
   const isNpmRange = !spec.includes('://') && !spec.startsWith('github:');
-  return installPlugin(isNpmRange ? name : spec);
+  return installPlugin(isNpmRange ? name + '@latest' : spec);
 }
 async function checkPluginUpdates() {
   const manifest = readJsonSafe(path.join(profileDir(), 'package.json')) || {};

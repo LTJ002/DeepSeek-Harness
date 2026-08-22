@@ -22,8 +22,10 @@ Unicode true
 Name "${PRODUCT}"
 OutFile "${ROOT}\dist\DeepSeek Harness Setup ${VERSION}.exe"
 InstallDir "$LOCALAPPDATA\Programs\DeepSeekHarness"
-; 需要管理员权限：安装完成后添加 Windows Defender 排除项，避免冷启动被实时扫描拖慢
-RequestExecutionLevel admin
+; 按用户安装（$LOCALAPPDATA + HKCU），无需管理员权限。
+; 注意：不要在此添加 Windows Defender 排除等"改杀软配置"的逻辑——
+; 未签名安装包 + 修改杀软白名单 = 杀软启发式引擎（360 HEUR/QVM）判定木马的高危特征。
+RequestExecutionLevel user
 SetCompressor /SOLID lzma
 SetCompressorDictSize 64
 Icon "${ROOT}\build\icon.ico"
@@ -65,17 +67,6 @@ Section "install"
   !endif
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
-  ; 添加 Windows Defender 排除项（安装器已是管理员权限；失败静默，绝不阻塞安装）
-  ; 排除安装目录（含 resources\harness\node_modules）与用户数据目录 ~/.dsh（含 profile 插件）
-  ReadEnvStr $0 "DSH_HOME"
-  StrCmp $0 "" "" +2
-  StrCpy $0 "$USERPROFILE\.dsh"
-  StrCpy $1 "$INSTDIR;$0"
-  SetOutPath "$PLUGINSDIR"
-  File "/oname=add-defender-exclusion.ps1" "${ROOT}\build\add-defender-exclusion.ps1"
-  ExecWait '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\add-defender-exclusion.ps1" -Paths "$1"' $2
-  SetOutPath "$INSTDIR"
-
   CreateDirectory "$SMPROGRAMS\${PRODUCT}"
   CreateShortcut "$SMPROGRAMS\${PRODUCT}\${PRODUCT}.lnk" "$INSTDIR\DeepSeek Harness.exe"
   CreateShortcut "$DESKTOP\${PRODUCT}.lnk" "$INSTDIR\DeepSeek Harness.exe"
@@ -90,16 +81,6 @@ Section "install"
 SectionEnd
 
 Section "uninstall"
-  ; 移除安装时添加的 Windows Defender 排除项
-  ReadEnvStr $0 "DSH_HOME"
-  StrCmp $0 "" "" +2
-  StrCpy $0 "$USERPROFILE\.dsh"
-  StrCpy $1 "$INSTDIR;$0"
-  SetOutPath "$PLUGINSDIR"
-  File "/oname=add-defender-exclusion.ps1" "${ROOT}\build\add-defender-exclusion.ps1"
-  ExecWait '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\add-defender-exclusion.ps1" -Paths "$1" -Remove' $2
-  SetOutPath "$INSTDIR"
-
   Delete "$SMPROGRAMS\${PRODUCT}\${PRODUCT}.lnk"
   RMDir "$SMPROGRAMS\${PRODUCT}"
   Delete "$DESKTOP\${PRODUCT}.lnk"
